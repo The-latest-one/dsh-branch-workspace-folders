@@ -1367,7 +1367,7 @@ return a.id < b.id ? -1 : 1;
 			return en;
 		}
 		/** More menu: consolidates filter, batch-select, tree controls and refresh. */
-		function MoreMenu({ filter, onPickFilter, onBatchSelect, groupBy, allGroupsExpanded, onToggleAllGroups, allBranchesCollapsed, onToggleAllBranches, onRefresh, t }) {
+		function MoreMenu({ filter, onPickFilter, onBatchSelect, onCreateWorkspace, groupBy, allGroupsExpanded, onToggleAllGroups, allBranchesCollapsed, onToggleAllBranches, onRefresh, t }) {
 			const [open, setOpen] = (0, react.useState)(false);
 			const filterId = filter === "running" ? "filter-running" : filter === "archived" ? "filter-archived" : filter === "currentWorkspace" ? "filter-current" : "filter-all";
 			const items = [
@@ -1376,6 +1376,8 @@ return a.id < b.id ? -1 : 1;
 				{ id: "filter-running", label: uiLabel("运行中", "Running") },
 				{ id: "filter-archived", label: uiLabel("已归档", "Archived") },
 				{ id: "filter-current", label: uiLabel("当前工作区", "Current workspace") },
+				{ type: "separator", id: "sep-add" },
+				{ id: "create-workspace", label: t("workspace.add"), icon: (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.IconProjectAddOutline16, { size: 14 }) },
 				{ type: "separator", id: "sep-batch" },
 				{ id: "batch-select", label: uiLabel("批量选择", "Select multiple"), icon: (0, react_jsx_runtime.jsx)("span", { style: { fontSize: 14, lineHeight: 1 }, children: "☑" }) }
 			];
@@ -1407,6 +1409,7 @@ return a.id < b.id ? -1 : 1;
 					else if (id === "filter-running") onPickFilter("running");
 					else if (id === "filter-archived") onPickFilter("archived");
 					else if (id === "filter-current") onPickFilter("currentWorkspace");
+					else if (id === "create-workspace") onCreateWorkspace();
 					else if (id === "batch-select") onBatchSelect();
 					else if (id === "toggle-workspaces") onToggleAllGroups();
 					else if (id === "toggle-branches") onToggleAllBranches();
@@ -2601,6 +2604,21 @@ return a.id < b.id ? -1 : 1;
 									]
 								})
 							}),
+								directoryFlowAvailable && wide && (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Tooltip, {
+								label: t("workspace.add"),
+								side: "bottom",
+								delayMs: 500,
+								children: (0, react_jsx_runtime.jsx)("button", {
+									ref: wsPlusRef,
+									type: "button",
+									className: WorkspaceBrowser_module_css_default.iconButton,
+									"aria-label": t("workspace.add"),
+									onClick: () => {
+										setWsPickerOpen((v) => !v);
+									},
+									children: (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.IconProjectAddOutline16, { size: wide ? 16 : 18 })
+								})
+							}),
 							(0, react_jsx_runtime.jsxs)("div", {
 								className: clsx(WorkspaceBrowser_module_css_default.headerActions, wide && searchExpanded && WorkspaceBrowser_module_css_default.headerActionsHidden),
 								style: selectionMode ? { maxWidth: "none" } : void 0,
@@ -2633,6 +2651,7 @@ return a.id < b.id ? -1 : 1;
 												if (typeof actions.setFilter === "function") actions.setFilter(id);
 											},
 											onBatchSelect: () => setSelectionMode(true),
+											onCreateWorkspace: () => setWsPickerOpen(true),
 											groupBy,
 											allGroupsExpanded,
 											onToggleAllGroups: () => {
@@ -2661,25 +2680,11 @@ return a.id < b.id ? -1 : 1;
 											},
 											onOrderPick: (mode) => {
 												actions.setOrderBy(mode);
-											},
-											t
-										}), directoryFlowAvailable && (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Tooltip, {
-											label: t("workspace.add"),
-											side: "bottom",
-											delayMs: 500,
-											children: (0, react_jsx_runtime.jsx)("button", {
-												ref: wsPlusRef,
-												type: "button",
-												className: WorkspaceBrowser_module_css_default.iconButton,
-												"aria-label": t("workspace.add"),
-												onClick: () => {
-													setWsPickerOpen((v) => !v);
-												},
-												children: (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.IconProjectAddOutline16, { size: wide ? 16 : 18 })
-											})
-										})
-									]
-								})
+										},
+										t
+									})
+								]
+							})
 							]
 							}),
 							(0, react_jsx_runtime.jsx)(WorkspacePickFlow, {
