@@ -1604,6 +1604,13 @@ return a.id < b.id ? -1 : 1;
 			const current = list.current;
 			const [expandedSessionGroups, setExpandedSessionGroups] = (0, react.useState)([]);
 			const [activeId, setActiveId] = (0, react.useState)(current ?? null);
+			const [localCollapsedSessionIds, setLocalCollapsedSessionIds] = (0, react.useState)(() => new Set());
+			const storeCollapsed = collapsedBranchesByAccount || {};
+			const collapsedFor = (accountKey) => {
+				const set = new Set(storeCollapsed[accountKey] || []);
+				for (const id of localCollapsedSessionIds) set.add(id);
+				return set;
+			};
 			const [drag, setDrag] = (0, react.useState)(null);
 			const sessionDropCommitted = (0, react.useRef)(false);
 			const [workspaceDrag, setWorkspaceDrag] = (0, react.useState)(null);
@@ -1684,14 +1691,14 @@ return a.id < b.id ? -1 : 1;
 				const map = new Map();
 				for (const group of groups) {
 					const sessionTree = buildSessionTree(group.sessions);
-					const collapsed = new Set(collapsedBranchesByAccount[group.key] || []);
+					const collapsed = collapsedFor(group.key);
 					const sessionRows = flattenSessionTree(sessionTree, 0, [], /* @__PURE__ */ new Set(), collapsed);
 					const pathByNode = buildPathMap(sessionTree);
 					const siblingsByNode = buildSiblingsMap(sessionTree);
 					map.set(group.key, { sessionTree, sessionRows, pathByNode, siblingsByNode });
 				}
 				return map;
-			}, [groups, collapsedBranchesByAccount]);
+			}, [groups, collapsedFor]);
 			(0, react.useEffect)(() => {
 				if (current === void 0) return;
 				const group = groups.find((candidate) => candidate.sessions.some((session) => session.id === current));
@@ -1713,20 +1720,34 @@ return a.id < b.id ? -1 : 1;
 				for (const [accountKey, tree] of sessionTreeByGroup) {
 					const ancestors = findSessionAncestors(tree.sessionTree, current);
 					if (ancestors === null) continue;
-					const collapsed = new Set(collapsedBranchesByAccount[accountKey] || []);
+					const collapsed = collapsedFor(accountKey);
 					for (const ancestorId of ancestors) {
-						if (collapsed.has(ancestorId)) setBranchCollapsed(accountKey, ancestorId, false);
+						if (collapsed.has(ancestorId)) {
+							setLocalCollapsedSessionIds((prev) => {
+								const next = new Set(prev);
+								next.delete(ancestorId);
+								return next;
+							});
+							if (typeof setBranchCollapsed === "function") setBranchCollapsed(accountKey, ancestorId, false);
+						}
 					}
 				}
 			}, [
 				current,
 				sessionTreeByGroup,
-				collapsedBranchesByAccount,
+				collapsedFor,
 				setBranchCollapsed
 			]);
 			const toggleCollapsedSession = (accountKey, id) => {
-				const collapsed = new Set(collapsedBranchesByAccount[accountKey] || []);
-				setBranchCollapsed(accountKey, id, !collapsed.has(id));
+				const collapsed = collapsedFor(accountKey);
+				const next = !collapsed.has(id);
+				setLocalCollapsedSessionIds((prev) => {
+					const updated = new Set(prev);
+					if (next) updated.add(id);
+					else updated.delete(id);
+					return updated;
+				});
+				if (typeof setBranchCollapsed === "function") setBranchCollapsed(accountKey, id, next);
 			};
 			const visibleRows = (0, react.useMemo)(() => {
 				const rows = [];
@@ -1770,7 +1791,7 @@ return a.id < b.id ? -1 : 1;
 				} else if (e.key === "ArrowRight") {
 					const children = node.children || [];
 					if (children.length > 0) {
-						const collapsed = new Set(collapsedBranchesByAccount[row.accountKey] || []).has(node.id);
+						const collapsed = collapsedFor(row.accountKey).has(node.id);
 						if (collapsed) {
 							setBranchCollapsed(row.accountKey, node.id, false);
 						} else {
@@ -1781,7 +1802,7 @@ return a.id < b.id ? -1 : 1;
 					}
 				} else if (e.key === "ArrowLeft") {
 					const children = node.children || [];
-					const collapsed = new Set(collapsedBranchesByAccount[row.accountKey] || []).has(node.id);
+					const collapsed = collapsedFor(row.accountKey).has(node.id);
 					if (children.length > 0 && !collapsed) {
 						setBranchCollapsed(row.accountKey, node.id, true);
 					} else if (index > 0) {
@@ -1944,7 +1965,7 @@ return a.id < b.id ? -1 : 1;
 										return (0, react_jsx_runtime.jsx)(SessionNodeItem, {
 											node,
 											depth,
-											collapsed: (collapsedBranchesByAccount[group.key] || []).includes(node.id),
+											collapsed: collapsedFor(group.key).has(node.id),
 											onToggleCollapse: node.children !== void 0 && node.children.length > 0 ? (id) => toggleCollapsedSession(group.key, id) : void 0,
 											currentId: current,
 											now,
@@ -2209,8 +2230,10 @@ return a.id < b.id ? -1 : 1;
 			const groupExpansion = useStore((s) => s.groupExpansion);
 			const sessionOrderByAccount = useStore((s) => s.sessionOrderByAccount);
 			const sessionUpdatedAtByAccount = useStore((s) => s.sessionUpdatedAtByAccount);
-			const collapsedBranchesByAccount = useStore((s) => s.collapsedBranchesByAccount);
-			const filter = useStore((s) => s.filter);
+			const collapsedBranchesByAccount = useStore((s) => s.collapsedBranchesByAccount) || {};
+			const persistedFilter = useStore((s) => s.filter);
+			const [localFilter, setLocalFilter] = (0, react.useState)("all");
+			const filter = persistedFilter ?? localFilter;
 			const allWorkspaceKeys = (0, react.useMemo)(() => ["", ...workspaces.map((workspace) => workspace.workspaceId)], [workspaces]);
 			const allGroupsExpanded = allWorkspaceKeys.length > 0 && allWorkspaceKeys.every((key) => groupExpansion[key] === true);
 			const branchIdsByAccount = (0, react.useMemo)(() => {
@@ -2519,8 +2542,10 @@ return a.id < b.id ? -1 : 1;
 										"aria-label": allBranchesCollapsed ? uiLabel("全部展开分支", "Expand all branches") : uiLabel("全部折叠分支", "Collapse all branches"),
 										onClick: () => {
 											const next = !allBranchesCollapsed;
-											for (const key of allWorkspaceKeys) {
-												actions.setAllBranchesCollapsed(key, branchIdsByAccount.get(key) || [], next);
+											if (typeof actions.setAllBranchesCollapsed === "function") {
+												for (const key of allWorkspaceKeys) {
+													actions.setAllBranchesCollapsed(key, branchIdsByAccount.get(key) || [], next);
+												}
 											}
 										},
 										children: (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.IconBranchOutline16, { size: 13 })
@@ -2606,7 +2631,10 @@ return a.id < b.id ? -1 : 1;
 								children: [
 								wide && (0, react_jsx_runtime.jsx)(FilterMenu, {
 									filter,
-									onPick: actions.setFilter,
+									onPick: (id) => {
+										setLocalFilter(id);
+										if (typeof actions.setFilter === "function") actions.setFilter(id);
+									},
 									t
 								}),
 								wide && (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Tooltip, {
