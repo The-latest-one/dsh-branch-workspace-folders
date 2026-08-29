@@ -1,7 +1,30 @@
 // @ts-ignore - vendored official WorkspaceBrowser module (CJS)
 declare const require: any
+import { Component } from 'react'
 const WorkspaceBrowserModule = require('../vendor/workspace-browser/client.cjs') as any
 const { WorkspaceBrowser } = WorkspaceBrowserModule as any
+
+function createSafeWorkspaceBrowser(original: any): any {
+  return class SafeWorkspaceBrowser extends Component<any, { failed: boolean }> {
+    state = { failed: false }
+
+    static getDerivedStateFromError() {
+      return { failed: true }
+    }
+
+    componentDidCatch(error: any) {
+      console.error('[dsh-branch-workspace-folders] WorkspaceBrowser crashed, falling back to official renderer', error)
+    }
+
+    render() {
+      if (this.state.failed) {
+        const Fallback = original
+        return Fallback ? <Fallback {...this.props} /> : null
+      }
+      return <WorkspaceBrowser {...this.props} />
+    }
+  }
+}
 
 export const name = 'dsh-branch-workspace-folders'
 
@@ -25,7 +48,7 @@ export function apply(ctx: ClientContext): void {
   //   - the official entry being removed/re-added later,
   //   - multiple candidate entries (we only ever take the first official-like one),
   //   - unload restoring the exact original component/inject only while we still own them.
-  const replaced = new Map<any, { original: any; originalInject: any; wrappedInject?: any }>()
+  const replaced = new Map<any, { original: any; originalInject: any; wrappedInject?: any; swappedComponent?: any }>()
 
   const isOfficialEntry = (candidate: any): boolean => !!candidate && (
     candidate.children?.['sidebar.workspaces.directoryFlow'] ||
@@ -33,7 +56,8 @@ export function apply(ctx: ClientContext): void {
   )
 
   const restoreEntry = (entry: any, state: any) => {
-    if (entry.component === WorkspaceBrowser) entry.component = state.original
+    if (state.swappedComponent !== undefined && entry.component === state.swappedComponent) entry.component = state.original
+    else if (entry.component === WorkspaceBrowser) entry.component = state.original
     const currentInject = entry.inject ?? entry.options?.inject
     if (state.wrappedInject !== undefined && currentInject === state.wrappedInject) {
       if (entry.inject === state.wrappedInject) entry.inject = state.originalInject
@@ -64,8 +88,9 @@ export function apply(ctx: ClientContext): void {
 
     const original = official.component
     const originalInject = official.inject ?? official.options?.inject
-    const state: any = { original, originalInject }
-    official.component = WorkspaceBrowser
+    const SafeWorkspaceBrowser = createSafeWorkspaceBrowser(original)
+    const state: any = { original, originalInject, swappedComponent: SafeWorkspaceBrowser }
+    official.component = SafeWorkspaceBrowser
 
     if (typeof originalInject === 'function') {
       const sessions = ctx.get('sessions')
