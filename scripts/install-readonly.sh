@@ -32,6 +32,25 @@ ensure_writable() {
   fi
 }
 
+sync_plugin_files() {
+  local install_dir="$PROFILE/node_modules/$PKG_NAME"
+  if [ ! -e "$install_dir" ]; then
+    echo "[install-dsh] ERROR: $install_dir does not exist; cannot direct-sync." >&2
+    echo "[install-dsh] Please run the pnpm install manually when network is available." >&2
+    exit 1
+  fi
+  if [ -L "$install_dir" ]; then
+    install_dir="$(readlink -f "$install_dir")"
+  fi
+  local tmp_dir
+  tmp_dir="$(mktemp -d)"
+  tar -xzf "$TARBALL" -C "$tmp_dir"
+  cp -a "$tmp_dir/package/." "$install_dir/"
+  rm -rf "$tmp_dir"
+  echo "[install-dsh] Direct sync completed: $install_dir"
+}
+
+
 echo "[install-dsh] Ensuring writable DSH home and profile..."
 ensure_writable "$DSH_HOME"
 ensure_writable "$PROFILE"
@@ -78,21 +97,12 @@ fi
 if [ "$install_ok" -ne 1 ]; then
   echo "[install-dsh] pnpm full-profile install is blocked (often by unrelated GitHub dependencies without network)."
   echo "[install-dsh] Falling back to direct plugin file sync into existing node_modules..."
-  INSTALL_DIR="$PROFILE/node_modules/$PKG_NAME"
-  if [ ! -e "$INSTALL_DIR" ]; then
-    echo "[install-dsh] ERROR: $INSTALL_DIR does not exist; cannot direct-sync." >&2
-    echo "[install-dsh] Please run the pnpm install manually when network is available." >&2
-    exit 1
-  fi
-  if [ -L "$INSTALL_DIR" ]; then
-    INSTALL_DIR="$(readlink -f "$INSTALL_DIR")"
-  fi
-  TMP_DIR="$(mktemp -d)"
-  tar -xzf "$TARBALL" -C "$TMP_DIR"
-  cp -a "$TMP_DIR/package/." "$INSTALL_DIR/"
-  rm -rf "$TMP_DIR"
-  echo "[install-dsh] Direct sync completed: $INSTALL_DIR"
 fi
+
+# Always sync plugin files so a same-version tarball update is applied even when
+# pnpm considers the package "already up to date".
+echo "[install-dsh] Syncing plugin files into node_modules..."
+sync_plugin_files
 
 echo "[install-dsh] Restarting DSH web..."
 # Match both `node /usr/local/bin/dsh web` and `dsh web` processes.
