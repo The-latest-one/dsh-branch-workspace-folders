@@ -21,7 +21,38 @@ DSH Web 左侧工作区/会话栏插件：在官方 `@deepseek-ai/dsh-client-ui-
 
 ## 安装到 DSH profile
 
-在 DSH profile 的 `package.json` 中增加依赖和 bundle：
+推荐使用一键自动安装命令：
+
+```bash
+npm run install:dsh
+```
+
+脚本会自动完成：
+
+1. `npm run typecheck`
+2. `npm run build`
+3. `npm pack`
+4. 将 tarball 复制到 profile 的 `vendor/` 目录
+5. 在 `${DSH_HOME:-$HOME/.dsh}/profiles/web` 下执行 `pnpm install`
+6. 如果 pnpm 因 profile 内其他远程依赖（如 GitHub 依赖）无法联网而失败，会自动降级为“直接同步插件文件到已安装的 node_modules”，然后重启 `dsh web`
+
+也可以手动指定仓库、profile 和启动目录：
+
+```bash
+bash scripts/install-readonly.sh \
+  /root/dsh/new/dsh-branch-workspace-folders \
+  /root/.dsh/profiles/web
+```
+
+常用环境变量：
+
+- `DSH_HOME`：DSH 数据目录，默认 `$HOME/.dsh`
+- `DSH_PROFILE`：目标 profile 路径，默认 `${DSH_HOME}/profiles/web`
+- `DSH_START_DIR`：重启 `dsh web` 时的工作目录，默认 `$HOME`
+- `NPM_CACHE_DIR`：npm pack 使用的缓存目录，默认 `/tmp/dsh-npm-cache`
+- `PNPM_STORE_DIR` / `PNPM_CACHE_DIR`：可选，传给 pnpm 的 store/cache 目录
+
+如果手动安装，在 DSH profile 的 `package.json` 中增加依赖和 bundle：
 
 ```json
 {

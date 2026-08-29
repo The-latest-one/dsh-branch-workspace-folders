@@ -1,53 +1,103 @@
 #!/usr/bin/env bash
-# Reliable install/update flow for DSH branch-graph-sidebar in read-only root
-# filesystems.  It optionally remounts / rw, rebuilds the plugin, refreshes
-# pnpm-lock.yaml, installs the local tarball, and restarts `dsh web`.
+# Reliable install/update flow for DSH branch-workspace-folders.
+#   - Works on read-only root filesystems (remounts / rw when needed).
+#   - Builds and packs the plugin.
+#   - Copies the tarball into the target DSH profile.
+#   - Tries pnpm offline/prefer-offline install.
+#   - If pnpm full-profile install is blocked by unrelated remote deps,
+#     falls back to directly syncing the plugin files into the already-installed
+#     node_modules package so the plugin can be updated without network.
 set -euo pipefail
 
 REPO="${1:-$PWD}"
-PROFILE="${2:-${DSH_HOME:-$HOME/.dsh}/profiles/web}"
+PROFILE="${2:-${DSH_PROFILE:-${DSH_HOME:-$HOME/.dsh}/profiles/web}}"
 DSH_HOME="${DSH_HOME:-$HOME/.dsh}"
 DSH_START_DIR="${DSH_START_DIR:-$HOME}"
+NPM_CACHE_DIR="${NPM_CACHE_DIR:-/tmp/dsh-npm-cache}"
+PNPM_STORE_DIR="${PNPM_STORE_DIR:-}"
+PNPM_CACHE_DIR="${PNPM_CACHE_DIR:-}"
 
 ensure_writable() {
   local target="$1"
   if [ ! -w "$target" ]; then
-    echo "[install-readonly] '$target' is not writable, attempting remount..."
+    echo "[install-dsh] '$target' is not writable, attempting remount..."
     # Best-effort remount. In containers this is often permitted; on truly
     # immutable systems this will fail and the script stops with a clear error.
     mount -o remount,rw / 2>/dev/null || true
   fi
   if [ ! -w "$target" ]; then
-    echo "[install-readonly] ERROR: '$target' is still read-only." >&2
-    echo "[install-readonly] Manual action required: remount the root filesystem rw, or bind-mount a writable path over $DSH_HOME." >&2
+    echo "[install-dsh] ERROR: '$target' is still read-only." >&2
+    echo "[install-dsh] Manual action required: remount the root filesystem rw, or bind-mount a writable path over $DSH_HOME." >&2
     exit 1
   fi
 }
 
-echo "[install-readonly] Ensuring writable DSH home and profile..."
+echo "[install-dsh] Ensuring writable DSH home and profile..."
 ensure_writable "$DSH_HOME"
 ensure_writable "$PROFILE"
 
-echo "[install-readonly] Building plugin in $REPO..."
+echo "[install-dsh] Building plugin in $REPO..."
 cd "$REPO"
 npm run typecheck
 npm run build
-npm pack --loglevel=error
+mkdir -p "$NPM_CACHE_DIR"
+npm pack --cache "$NPM_CACHE_DIR" --loglevel=error
 
-echo "[install-readonly] Updating profile package/lock and installing tarball..."
+PKG_NAME="$(node -p "require('./package.json').name")"
+PKG_VERSION="$(node -p "require('./package.json').version")"
+TARBALL="$PWD/${PKG_NAME}-${PKG_VERSION}.tgz"
+VENDOR_DIR="$PROFILE/vendor"
+
+if [ ! -d "$VENDOR_DIR" ]; then
+  mkdir -p "$VENDOR_DIR"
+fi
+cp -f "$TARBALL" "$VENDOR_DIR/"
+echo "[install-dsh] Copied tarball to $VENDOR_DIR/"
+
 cd "$PROFILE"
-# The profile already references the local tarball via file: dependency.
-# `--no-frozen-lockfile` lets pnpm add the missing lockfile entry.  We prefer
-# offline mode so an network outage cannot erase an already-installed plugin.
-if ! pnpm install --offline --no-frozen-lockfile; then
-  echo "[install-readonly] Offline install failed; retrying with prefer-offline..."
-  pnpm install --prefer-offline --no-frozen-lockfile
+
+PNPM_FLAGS=(--no-frozen-lockfile)
+if [ -n "$PNPM_STORE_DIR" ]; then
+  PNPM_FLAGS+=(--store-dir "$PNPM_STORE_DIR")
+fi
+if [ -n "$PNPM_CACHE_DIR" ]; then
+  PNPM_FLAGS+=(--cache-dir "$PNPM_CACHE_DIR")
 fi
 
-echo "[install-readonly] Restarting DSH web..."
+install_ok=0
+echo "[install-dsh] Trying pnpm offline install..."
+if pnpm install --offline "${PNPM_FLAGS[@]}"; then
+  install_ok=1
+else
+  echo "[install-dsh] Offline install failed; retrying with prefer-offline..."
+  if pnpm install --prefer-offline "${PNPM_FLAGS[@]}"; then
+    install_ok=1
+  fi
+fi
+
+if [ "$install_ok" -ne 1 ]; then
+  echo "[install-dsh] pnpm full-profile install is blocked (often by unrelated GitHub dependencies without network)."
+  echo "[install-dsh] Falling back to direct plugin file sync into existing node_modules..."
+  INSTALL_DIR="$PROFILE/node_modules/$PKG_NAME"
+  if [ ! -e "$INSTALL_DIR" ]; then
+    echo "[install-dsh] ERROR: $INSTALL_DIR does not exist; cannot direct-sync." >&2
+    echo "[install-dsh] Please run the pnpm install manually when network is available." >&2
+    exit 1
+  fi
+  if [ -L "$INSTALL_DIR" ]; then
+    INSTALL_DIR="$(readlink -f "$INSTALL_DIR")"
+  fi
+  TMP_DIR="$(mktemp -d)"
+  tar -xzf "$TARBALL" -C "$TMP_DIR"
+  cp -a "$TMP_DIR/package/." "$INSTALL_DIR/"
+  rm -rf "$TMP_DIR"
+  echo "[install-dsh] Direct sync completed: $INSTALL_DIR"
+fi
+
+echo "[install-dsh] Restarting DSH web..."
 # Match both `node /usr/local/bin/dsh web` and `dsh web` processes.
 pkill -f "dsh web" 2>/dev/null || true
 sleep 1
 cd "$DSH_START_DIR"
 nohup dsh web >/tmp/dsh-web.log 2>&1 &
-echo "[install-readonly] DSH web restarted with pid $!"
+echo "[install-dsh] DSH web restarted with pid $!"
