@@ -24,9 +24,11 @@
 					orderBy: "updated",
 					groupExpansion: {},
 					sessionOrderByAccount: {},
-					sessionUpdatedAtByAccount: {}
+					sessionUpdatedAtByAccount: {},
+					collapsedBranchesByAccount: {},
+					filter: "all"
 				}),
-				persist: "dsh.workspace.view.v5",
+				persist: "dsh.workspace.view.v6",
 				actions: {
 					setGroupBy: (d, mode) => {
 						d.groupBy = mode;
@@ -37,11 +39,33 @@
 					setGroupExpanded: (d, key, expanded) => {
 						d.groupExpansion[key] = expanded;
 					},
+					setFilter: (d, filter) => {
+						d.filter = filter;
+					},
+					setBranchCollapsed: (d, accountKey, nodeId, collapsed) => {
+						const list = Array.isArray(d.collapsedBranchesByAccount[accountKey]) ? d.collapsedBranchesByAccount[accountKey].slice() : [];
+						const index = list.indexOf(nodeId);
+						if (collapsed) {
+							if (index === -1) list.push(nodeId);
+						} else if (index !== -1) {
+							list.splice(index, 1);
+						}
+						d.collapsedBranchesByAccount[accountKey] = list;
+					},
+					setAllBranchesCollapsed: (d, accountKey, nodeIds, collapsed) => {
+						const prev = new Set(Array.isArray(d.collapsedBranchesByAccount[accountKey]) ? d.collapsedBranchesByAccount[accountKey] : []);
+						for (const id of nodeIds) {
+							if (collapsed) prev.add(id);
+							else prev.delete(id);
+						}
+						d.collapsedBranchesByAccount[accountKey] = Array.from(prev);
+					},
 					retainAccountKeys: (d, workspaceKeys) => {
 						const retained = new Set(workspaceKeys);
 						d.groupExpansion = Object.fromEntries(Object.entries(d.groupExpansion).filter(([key]) => retained.has(key)));
 						d.sessionOrderByAccount = Object.fromEntries(Object.entries(d.sessionOrderByAccount).filter(([key]) => retained.has(key)));
 						d.sessionUpdatedAtByAccount = Object.fromEntries(Object.entries(d.sessionUpdatedAtByAccount).filter(([key]) => retained.has(key)));
+						d.collapsedBranchesByAccount = Object.fromEntries(Object.entries(d.collapsedBranchesByAccount).filter(([key]) => retained.has(key)));
 					},
 					syncSessionOrderAccount: (d, accountKey, order, updatedAt) => {
 						d.sessionOrderByAccount[accountKey] = order;
@@ -190,8 +214,18 @@
 			const expandedGroups = new Set(view.expandedGroups);
 			const descendants = (0, _deepseek_ai_dsh_client_runtime_client.indexSubagentDescendants)(list.byId);
 			const currentGroup = list.current === void 0 ? void 0 : workspaces.find((w) => w.sessionIds.includes(list.current))?.workspaceId ?? "";
+			const filter = view.filter || "all";
+			const groupingArchived = filter === "archived" ? new Set() : archived;
 			const groups = [];
-			for (const g of groupByWorkspace(list, workspaces, archived, view.ungroupedOrder)) {
+			for (const g of groupByWorkspace(list, workspaces, groupingArchived, view.ungroupedOrder)) {
+				let members = g.sessions;
+				if (filter === "running") {
+					members = members.filter((s) => s.running);
+				} else if (filter === "archived") {
+					members = members.filter((s) => archived.has(s.id));
+				} else if (filter === "currentWorkspace") {
+					members = g.key === currentGroup ? members : [];
+				}
 				const expanded = expandedGroups.has(g.key);
 				groups.push({
 					key: g.key,
@@ -199,10 +233,10 @@
 					cwd: g.cwd,
 					createdAt: g.createdAt,
 					label: g.label,
-					sessionCount: g.sessions.length,
+					sessionCount: members.length,
 					expanded,
 					containsCurrent: g.key === currentGroup,
-					sessions: expanded ? g.sessions.map((session) => sessionNode(session, descendants)) : []
+					sessions: expanded ? members.map((session) => sessionNode(session, descendants)) : []
 				});
 			}
 			return groups;
@@ -216,13 +250,19 @@
 		* @param archivedSessionIds - registry-global archive set.
 		* @returns flat rows in render order.
 		*/
-		function deriveFlat(list, archivedSessionIds, orderBy = "updated") {
+		function deriveFlat(list, archivedSessionIds, orderBy = "updated", filter = "all") {
 			const archived = new Set(archivedSessionIds);
 			const descendants = (0, _deepseek_ai_dsh_client_runtime_client.indexSubagentDescendants)(list.byId);
 			const rows = [];
 			for (const id of list.ids) {
 				const s = list.byId[id];
-				if (s === void 0 || !sessionVisible(s, list.current, archived)) continue;
+				if (s === void 0) continue;
+				if (filter === "archived") {
+					if (!archived.has(s.id)) continue;
+				} else {
+					if (!sessionVisible(s, list.current, archived)) continue;
+					if (filter === "running" && !s.running) continue;
+				}
 				rows.push(s);
 			}
 			if (orderBy === "default") {
@@ -283,10 +323,20 @@
 			return {
 				items: ordered.slice(0, limit).map((summary) => {
 					const match = contentBySession.get(summary.id);
+					const path = [];
+					const seen = new Set();
+					let cursor = summary;
+					while (cursor.parentId !== void 0 && cursor.parentId !== cursor.id && list.byId[cursor.parentId] !== void 0 && !seen.has(cursor.parentId)) {
+						seen.add(cursor.id);
+						path.unshift(sessionTitle(list.byId[cursor.parentId]));
+						cursor = list.byId[cursor.parentId];
+						if (seen.has(cursor.id)) break;
+					}
 					return {
 						id: summary.id,
 						title: sessionTitle(summary),
 						workspace: labelOf(summary),
+						path,
 						running: summary.running,
 						runningSubagentCount: descendants.get(summary.id)?.runningCount ?? 0,
 						...summary.pendingInteraction === void 0 ? {} : { pendingInteraction: summary.pendingInteraction },
@@ -475,6 +525,10 @@
 				role: "treeitem",
 				"aria-expanded": row.expanded,
 				onClick: onToggle,
+				onContextMenu: (e) => {
+					e.preventDefault();
+					if (actions !== void 0) setMenuOpen(true);
+				},
 				draggable: drag !== void 0,
 				onDragStart: drag === void 0 ? void 0 : (e) => {
 					e.dataTransfer.effectAllowed = "move";
@@ -616,11 +670,17 @@
 			}, status.label))] });
 		}
 		/** Hover-card body: full title, relative time, and every relevant live status. */
-		function SessionHoverContent({ node, now, t }) {
+		function SessionHoverContent({ node, now, t, path = [] }) {
 			const statuses = sessionStatuses(node, t);
+			const pathLabel = path.length > 0 ? path.map((p) => p.title ?? p).join(" / ") : void 0;
 			return (0, react_jsx_runtime.jsxs)("div", {
 				className: Rows_module_css_default.hoverContent,
 				children: [
+					pathLabel !== void 0 && (0, react_jsx_runtime.jsx)("div", {
+						className: Rows_module_css_default.hoverTime,
+						style: { fontSize: 12 },
+						children: pathLabel
+					}),
 					(0, react_jsx_runtime.jsx)("div", {
 						className: Rows_module_css_default.hoverTitle,
 						children: displayTitle(node, t)
@@ -672,6 +732,10 @@
 					children: [(0, react_jsx_runtime.jsx)("span", {
 						className: Rows_module_css_default.searchResultWorkspace,
 						children: result.workspace
+					}), result.path !== void 0 && result.path.length > 0 && (0, react_jsx_runtime.jsx)("span", {
+						className: Rows_module_css_default.searchResultSnippet,
+						style: { color: "var(--dsw-alias-label-tertiary)" },
+						children: result.path.join(" / ")
 					}), result.snippet !== void 0 && (0, react_jsx_runtime.jsx)("span", {
 						className: Rows_module_css_default.searchResultSnippet,
 						children: result.snippet
@@ -694,149 +758,246 @@
 		* @param props.t - the browser root's locale seat.
 		* @returns the session row.
 		*/
-		function SessionNodeItem({ node, currentId, now, onOpen, onRename, onFork, onArchive, drag, flat = false, t, depth = 0, collapsed = false, onToggleCollapse }) {
-			const row = node;
-			const title = displayTitle(node, t);
-			const selected = node.id === currentId;
-			const statuses = sessionStatuses(node, t);
-			const showStatus = statuses[0].state !== "done" || row.completed;
-			const [menuOpen, setMenuOpen] = (0, react.useState)(false);
-			const sessionMenuItems = [
-				{
-					id: "rename",
-					label: t("rename"),
-					icon: (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.IconEditOutline16, {})
-				},
-				{
-					id: "fork",
-					label: t("menu.fork"),
-					icon: (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.IconBranchOutline16, {})
-				},
-				{
-					id: "archive",
-					label: t("menu.archiveSession"),
-					icon: (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.IconArchiveOutline20, { size: 16 })
-				}
-			];
-			return (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.HoverCard, {
-				anchor: (0, react_jsx_runtime.jsxs)("div", {
-					className: clsx(Rows_module_css_default.sessionRow, selected && Rows_module_css_default.selected, menuOpen && Rows_module_css_default.menuOpen, flat && !showStatus && Rows_module_css_default.flatSessionRowWithoutStatus, drag?.marker === "before" && Rows_module_css_default.dropBefore, drag?.marker === "after" && Rows_module_css_default.dropAfter),
-					...(depth > 0 ? { style: { paddingLeft: 8 + depth * 14 }, "aria-level": depth + 1 } : {}),
-					role: "treeitem",
-					"aria-selected": selected,
-					onClick: () => {
-						onOpen(node.id);
-					},
-					draggable: drag !== void 0,
-					onDragStart: drag === void 0 ? void 0 : (e) => {
-						e.dataTransfer.effectAllowed = "move";
-						e.dataTransfer.setData("text/plain", node.id);
-						drag.start();
-					},
-					onDragEnd: drag?.end,
-					onDragOver: drag === void 0 ? void 0 : (e) => {
-						if (!drag.active) return;
-						e.preventDefault();
-						e.dataTransfer.dropEffect = "move";
-						drag.hover(rowHalf(e));
-					},
-					onDrop: drag === void 0 ? void 0 : (e) => {
-						if (!drag.active) return;
-						e.preventDefault();
-						drag.drop(rowHalf(e));
-					},
-					children: [
-						onToggleCollapse !== void 0 && node.children !== void 0 && node.children.length > 0 && (0, react_jsx_runtime.jsx)("button", {
-							type: "button",
-							"aria-label": collapsed ? uiLabel("展开分支", "Expand branch") : uiLabel("折叠分支", "Collapse branch"),
-							"aria-expanded": !collapsed,
-							onClick: (e) => {
-								e.stopPropagation();
-								onToggleCollapse(node.id);
-							},
-							style: {
-								display: "inline-flex",
-								alignItems: "center",
-								justifyContent: "center",
-								flex: "none",
-								width: 20,
-								height: 20,
-								padding: 0,
-								border: "none",
-								background: "none",
-								color: "var(--dsw-alias-label-tertiary)",
-								cursor: "pointer",
-								borderRadius: 6
-							},
-							children: collapsed ? (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.IconChevronRightOutline14, {}) : (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.IconChevronDownOutline14, {})
-						}),
-						(!flat || showStatus) && (0, react_jsx_runtime.jsx)("span", {
-							className: Rows_module_css_default.slot,
-							children: showStatus && (0, react_jsx_runtime.jsx)(SessionStatusDots, { statuses })
-						}),
-						(0, react_jsx_runtime.jsx)("span", {
-							className: Rows_module_css_default.title,
-							children: title
-						}),
-						depth === 0 && node.children !== void 0 && node.children.length > 0 && (0, react_jsx_runtime.jsx)("span", {
-							style: {
-								display: "inline-flex",
-								alignItems: "center",
-								gap: "2px",
-								flex: "none",
-								color: "var(--dsw-alias-label-tertiary)",
-								fontSize: "12px",
-								lineHeight: "17px"
-							},
-							"aria-label": `${countDescendants(node)} branches`,
-							children: [(0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.IconBranchOutline16, { size: 11 }), (0, react_jsx_runtime.jsx)("span", { children: countDescendants(node) })]
-						}),
-						!row.blank && (0, react_jsx_runtime.jsx)("span", {
-							className: Rows_module_css_default.time,
-							children: timeLabel(row.updatedAt, now, t)
-						}),
-						!row.blank && (0, react_jsx_runtime.jsx)("span", {
-							className: Rows_module_css_default.rowActions,
-							children: (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Menu, {
-								open: menuOpen,
-								onClose: () => {
-									setMenuOpen(false);
-								},
-								items: sessionMenuItems,
-								onSelect: (id) => {
-									setMenuOpen(false);
-									if (id === "rename") onRename(node.id, row.title);
-									if (id === "fork") onFork(node.id);
-									if (id === "archive") onArchive(node.id);
-								},
-								portal: true,
-								closeOnPointerLeave: true,
-								anchor: (0, react_jsx_runtime.jsx)("button", {
-									type: "button",
-									className: Rows_module_css_default.iconButton,
-									"aria-label": t("actions.session.aria", { name: title }),
-									onClick: (e) => {
-										e.stopPropagation();
-										setMenuOpen((v) => !v);
-									},
-									children: (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.IconEllipsisOutline16, {})
-								})
-							})
-						})
-					]
-				}),
-				content: (0, react_jsx_runtime.jsx)(SessionHoverContent, {
-					node,
-					now,
-					t
-				}),
-				disabled: menuOpen || drag?.active === true,
-				copyText: row.blank ? void 0 : row.title,
-				copyLabel: t("copy"),
-				copiedLabel: t("hover.copied")
-			});
-		}
-		//#endregion
+		function SessionNodeItem({ node, currentId, now, onOpen, onRename, onFork, onArchive, drag, flat = false, t, depth = 0, collapsed = false, onToggleCollapse, path = [], siblings = [], onJumpSibling, onContextMenu, tabIndex = 0, onKeyDown, selectionMode = false, selected = false, onToggleSelect }) {
+const row = node;
+const title = displayTitle(node, t);
+const rowSelected = node.id === currentId;
+const statuses = sessionStatuses(node, t);
+const showStatus = statuses[0].state !== "done" || row.completed;
+const [menuOpen, setMenuOpen] = (0, react.useState)(false);
+const [branchMenuOpen, setBranchMenuOpen] = (0, react.useState)(false);
+const branchChildren = node.children || [];
+const branchMenuItems = branchChildren.map((child) => ({
+id: child.id,
+label: displayTitle(child, t),
+icon: child.running ? (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.StateDot, { state: "ongoing" }) : (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.StateDot, { state: "done" })
+}));
+const sessionMenuItems = [
+{
+id: "rename",
+label: t("rename"),
+icon: (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.IconEditOutline16, {})
+},
+{
+id: "fork",
+label: t("menu.fork"),
+icon: (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.IconBranchOutline16, {})
+},
+{
+id: "archive",
+label: t("menu.archiveSession"),
+icon: (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.IconArchiveOutline20, { size: 16 })
+}
+];
+const openContextMenu = (e) => {
+if (onContextMenu) {
+e.preventDefault();
+onContextMenu(node.id, row.title);
+} else {
+e.preventDefault();
+setMenuOpen(true);
+}
+};
+const handleRowKeyDown = (e) => {
+if (onKeyDown) onKeyDown(e, node);
+};
+return (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.HoverCard, {
+anchor: (0, react_jsx_runtime.jsxs)("div", {
+className: clsx(Rows_module_css_default.sessionRow, rowSelected && Rows_module_css_default.selected, menuOpen && Rows_module_css_default.menuOpen, flat && !showStatus && Rows_module_css_default.flatSessionRowWithoutStatus, drag?.marker === "before" && Rows_module_css_default.dropBefore, drag?.marker === "after" && Rows_module_css_default.dropAfter),
+...(depth > 0 ? { style: { paddingLeft: 8 + depth * 14 }, "aria-level": depth + 1 } : {}),
+role: "treeitem",
+"aria-selected": rowSelected,
+...(node.children !== void 0 && node.children.length > 0 ? { "aria-expanded": !collapsed } : {}),
+tabIndex,
+onClick: () => {
+onOpen(node.id);
+},
+onContextMenu: openContextMenu,
+onKeyDown: handleRowKeyDown,
+draggable: drag !== void 0,
+onDragStart: drag === void 0 ? void 0 : (e) => {
+e.dataTransfer.effectAllowed = "move";
+e.dataTransfer.setData("text/plain", node.id);
+drag.start();
+},
+onDragEnd: drag?.end,
+onDragOver: drag === void 0 ? void 0 : (e) => {
+if (!drag.active) return;
+e.preventDefault();
+e.dataTransfer.dropEffect = "move";
+drag.hover(rowHalf(e));
+},
+onDrop: drag === void 0 ? void 0 : (e) => {
+if (!drag.active) return;
+e.preventDefault();
+drag.drop(rowHalf(e));
+},
+children: [
+selectionMode && (0, react_jsx_runtime.jsx)("span", {
+style: { display: "inline-flex", alignItems: "center", flex: "none", paddingRight: 2 },
+children: (0, react_jsx_runtime.jsx)("input", {
+type: "checkbox",
+checked: selected,
+"aria-label": uiLabel("选择会话", "Select session"),
+onClick: (e) => {
+e.stopPropagation();
+},
+onChange: () => {
+if (onToggleSelect) onToggleSelect(node.id);
+}
+})
+}),
+onToggleCollapse !== void 0 && node.children !== void 0 && node.children.length > 0 && (0, react_jsx_runtime.jsx)("button", {
+type: "button",
+"aria-label": collapsed ? uiLabel("展开分支", "Expand branch") : uiLabel("折叠分支", "Collapse branch"),
+"aria-expanded": !collapsed,
+onClick: (e) => {
+e.stopPropagation();
+onToggleCollapse(node.id);
+},
+style: {
+display: "inline-flex",
+alignItems: "center",
+justifyContent: "center",
+flex: "none",
+width: 20,
+height: 20,
+padding: 0,
+border: "none",
+background: "none",
+color: "var(--dsw-alias-label-tertiary)",
+cursor: "pointer",
+borderRadius: 6
+},
+children: collapsed ? (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.IconChevronRightOutline14, {}) : (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.IconChevronDownOutline14, {})
+}),
+(!flat || showStatus) && (0, react_jsx_runtime.jsx)("span", {
+className: Rows_module_css_default.slot,
+children: showStatus && (0, react_jsx_runtime.jsx)(SessionStatusDots, { statuses })
+}),
+(0, react_jsx_runtime.jsx)("span", {
+className: Rows_module_css_default.title,
+children: title
+}),
+(node.orphan === true || node.cycle === true) && (0, react_jsx_runtime.jsx)("span", {
+style: {
+display: "inline-flex",
+alignItems: "center",
+flex: "none",
+marginLeft: 2,
+color: "var(--dsw-alias-state-warning-primary)",
+fontSize: 12,
+cursor: "help"
+},
+title: node.orphan ? uiLabel("缺失父节点", "Orphan session") : uiLabel("检测到环", "Cycle detected"),
+children: node.orphan ? "⚠" : "↻"
+}),
+depth === 0 && node.children !== void 0 && node.children.length > 0 && (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Menu, {
+open: branchMenuOpen,
+onClose: () => {
+setBranchMenuOpen(false);
+},
+items: branchMenuItems,
+onSelect: (id) => {
+setBranchMenuOpen(false);
+onOpen(id);
+},
+portal: true,
+closeOnPointerLeave: true,
+anchor: (0, react_jsx_runtime.jsx)("button", {
+type: "button",
+className: Rows_module_css_default.iconButton,
+"aria-label": `${countDescendants(node)} ${uiLabel("个子分支", "branches")}`,
+onClick: (e) => {
+e.stopPropagation();
+setBranchMenuOpen((v) => !v);
+},
+style: {
+display: "inline-flex",
+alignItems: "center",
+gap: "2px",
+flex: "none",
+color: "var(--dsw-alias-label-tertiary)",
+fontSize: "12px",
+lineHeight: "17px",
+padding: "0 4px",
+border: "none",
+background: "none",
+cursor: "pointer",
+borderRadius: 6
+},
+children: [(0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.IconBranchOutline16, { size: 11 }), (0, react_jsx_runtime.jsx)("span", { children: countDescendants(node) })]
+})
+}),
+!row.blank && (0, react_jsx_runtime.jsx)("span", {
+className: Rows_module_css_default.time,
+children: timeLabel(row.updatedAt, now, t)
+}),
+!row.blank && (0, react_jsx_runtime.jsx)("span", {
+className: Rows_module_css_default.rowActions,
+children: [
+siblings.length > 1 && onJumpSibling !== void 0 && (0, react_jsx_runtime.jsx)("button", {
+type: "button",
+className: Rows_module_css_default.iconButton,
+"aria-label": uiLabel("上一个分支", "Previous branch"),
+onClick: (e) => {
+e.stopPropagation();
+onJumpSibling("prev", node.id);
+},
+children: "↑"
+}),
+siblings.length > 1 && onJumpSibling !== void 0 && (0, react_jsx_runtime.jsx)("button", {
+type: "button",
+className: Rows_module_css_default.iconButton,
+"aria-label": uiLabel("下一个分支", "Next branch"),
+onClick: (e) => {
+e.stopPropagation();
+onJumpSibling("next", node.id);
+},
+children: "↓"
+}),
+(0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Menu, {
+open: menuOpen,
+onClose: () => {
+setMenuOpen(false);
+},
+items: sessionMenuItems,
+onSelect: (id) => {
+setMenuOpen(false);
+if (id === "rename") onRename(node.id, row.title);
+if (id === "fork") onFork(node.id);
+if (id === "archive") onArchive(node.id);
+},
+portal: true,
+closeOnPointerLeave: true,
+anchor: (0, react_jsx_runtime.jsx)("button", {
+type: "button",
+className: Rows_module_css_default.iconButton,
+"aria-label": t("actions.session.aria", { name: title }),
+onClick: (e) => {
+e.stopPropagation();
+setMenuOpen((v) => !v);
+},
+children: (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.IconEllipsisOutline16, {})
+})
+})
+]
+})
+]
+}),
+content: (0, react_jsx_runtime.jsx)(SessionHoverContent, {
+node,
+now,
+t,
+path
+}),
+disabled: menuOpen || branchMenuOpen || drag?.active === true,
+copyText: row.blank ? void 0 : row.title,
+copyLabel: t("copy"),
+copiedLabel: t("hover.copied")
+});
+}
+//#endregion
 		//#region \0dsh-css:/home/runner/work/deepseek-harness/deepseek-harness/packages/client/ui-workspace/src/client/WorkspacePicker.module.css.mjs
 		const css$1 = "._G5b-a_modalAction{min-width:72px}._G5b-a_modalError,._G5b-a_menuStatus{margin-top:8px;font-size:12px;line-height:18px}._G5b-a_modalError{color:var(--dsw-alias-state-error-primary)}._G5b-a_menuStatus{color:var(--dsw-alias-label-secondary)}";
 		const tagId$1 = "@deepseek-ai/dsh-client-ui-workspace/WorkspacePicker.module.css";
@@ -1008,7 +1169,7 @@
 		}
 		//#endregion
 		//#region \0dsh-css:/home/runner/work/deepseek-harness/deepseek-harness/packages/client/ui-workspace/src/client/WorkspaceBrowser.module.css.mjs
-		const css = ".qDHVXG_root{--dsh-session-list-edge-inset:var(--dsh-sidebar-inline-padding);--dsh-session-list-scrollbar-width:8px;--dsh-session-list-scrollbar-offset:2px;box-sizing:border-box;min-height:0;padding-right:var(--dsh-session-list-edge-inset);flex-direction:column;flex:1;display:flex}.qDHVXG_root.qDHVXG_rail{padding-right:0}.qDHVXG_iconButton{cursor:pointer;width:28px;height:28px;color:var(--dsw-alias-label-secondary);background:0 0;border:none;border-radius:50%;flex:none;justify-content:center;align-items:center;padding:0;display:inline-flex}.qDHVXG_iconButton:hover{background:var(--dsw-alias-interactive-bg-hover)}.qDHVXG_sectionHeader{box-sizing:border-box;height:36px;color:var(--dsw-alias-label-tertiary);border-radius:12px;flex:none;justify-content:flex-end;align-items:center;gap:4px;margin-bottom:4px;padding-left:4px;display:flex;overflow:hidden}.qDHVXG_root:not(.qDHVXG_rail) .qDHVXG_sectionHeader{margin-top:2px;margin-right:-4px}.qDHVXG_sectionLabel{white-space:nowrap;opacity:1;visibility:visible;min-width:0;max-width:45%;transition:max-width .18s var(--ds-ease-in-out), margin-right .18s var(--ds-ease-in-out), opacity .12s var(--ds-ease-in-out), transform .18s var(--ds-ease-in-out), visibility 0s linear;flex:none;line-height:20px;overflow:hidden}.qDHVXG_sectionLabelHidden{opacity:0;visibility:hidden;max-width:0;margin-right:-4px;transition-delay:0s,0s,0s,0s,.18s;transform:translate(-4px)}.qDHVXG_searchSlot{box-sizing:border-box;min-width:0;max-width:28px;transition:max-width .18s var(--ds-ease-in-out), padding-left .18s var(--ds-ease-in-out);flex:1;align-items:center;margin-left:auto;padding-left:0;display:flex}.qDHVXG_searchSlotExpanded{max-width:100%;padding-left:0}.qDHVXG_headerActions{opacity:1;visibility:visible;max-width:60px;transition:max-width .18s var(--ds-ease-in-out), opacity .12s var(--ds-ease-in-out), transform .18s var(--ds-ease-in-out), visibility 0s linear;flex:none;align-items:center;gap:4px;display:flex;overflow:hidden}.qDHVXG_headerActionsHidden{opacity:0;visibility:hidden;pointer-events:none;max-width:0;transition-delay:0s,0s,0s,.18s;transform:translate(4px)}.qDHVXG_search{box-sizing:border-box;cursor:text;width:100%;height:28px;color:var(--dsw-alias-label-secondary);transition:width .18s var(--ds-ease-in-out), padding .18s var(--ds-ease-in-out), border-color .18s var(--ds-ease-in-out), background-color .18s var(--ds-ease-in-out);background:0 0;border:none;border-radius:50%;flex:none;align-items:center;gap:0;margin:0;padding:0;display:flex;overflow:hidden}.qDHVXG_searchExpanded{border:1px solid var(--dsw-alias-border-l2);width:calc(100% + 4px);height:30px;color:var(--dsw-alias-label-caption);background:0 0;border-radius:10px;margin-inline:-2px;padding:0 4px 0 0}.qDHVXG_searchButton{cursor:pointer;width:28px;height:28px;color:inherit;background:0 0;border:none;border-radius:50%;flex:none;justify-content:center;align-items:center;padding:0;display:inline-flex}.qDHVXG_searchExpanded .qDHVXG_searchButton{width:28px;height:30px}.qDHVXG_searchButton:hover{background:var(--dsw-alias-interactive-bg-hover)}.qDHVXG_searchExpanded .qDHVXG_searchButton:hover{background:0 0}.qDHVXG_searchInput{opacity:0;pointer-events:none;width:0;min-width:0;color:var(--dsw-alias-label-primary);transition:opacity .12s var(--ds-ease-in-out);background:0 0;border:none;outline:none;flex:1;font-size:13px;line-height:18px}.qDHVXG_searchExpanded .qDHVXG_searchInput{opacity:1;pointer-events:auto;margin-left:-2px}.qDHVXG_searchInput::placeholder{color:var(--dsw-alias-label-tertiary)}.qDHVXG_clearButton{cursor:pointer;width:24px;height:24px;color:var(--dsw-alias-label-secondary);background:0 0;border:none;border-radius:50%;flex:none;justify-content:center;align-items:center;padding:0;display:inline-flex}.qDHVXG_clearButton:hover{background:var(--dsw-alias-interactive-bg-hover)}.qDHVXG_rail .qDHVXG_sectionHeader{justify-content:flex-start;gap:0;margin-bottom:12px;padding-left:0}.qDHVXG_rail .qDHVXG_headerActions{max-width:none}.qDHVXG_rail .qDHVXG_iconButton{width:36px;height:36px;color:var(--dsw-alias-label-primary)}.qDHVXG_rail .qDHVXG_search{background:0 0;border-color:#0000;gap:0;width:36px;height:36px;margin:0 0 12px;padding:0}.qDHVXG_rail .qDHVXG_searchButton{width:36px;height:36px;color:var(--dsw-alias-label-primary)}.qDHVXG_rail .qDHVXG_searchButton:hover{background:var(--dsw-alias-interactive-bg-hover)}.qDHVXG_listArea{min-height:0;margin-left:-4px;margin-right:calc(-1 * var(--dsh-session-list-edge-inset));flex-direction:column;flex:1;padding-left:4px;display:flex;overflow:visible}.qDHVXG_rail .qDHVXG_listArea{margin-left:0;margin-right:0;padding-left:0}.qDHVXG_treeBody{flex-direction:column;flex:1;min-height:0;display:flex;position:relative}.qDHVXG_fade{left:0;right:var(--dsh-session-list-edge-inset);background:linear-gradient(to bottom, transparent, var(--dsw-specific-sidebar-fill));pointer-events:none;height:24px;position:absolute;bottom:0}.qDHVXG_wide{animation:qDHVXG_wide-in .2s var(--ds-ease-in-out)}@keyframes qDHVXG_wide-in{0%{opacity:0}}.qDHVXG_list{min-height:0;margin-left:-4px;margin-right:var(--dsh-session-list-scrollbar-offset);padding-left:4px;padding-right:calc(var(--dsh-session-list-edge-inset) - var(--dsh-session-list-scrollbar-width) - var(--dsh-session-list-scrollbar-offset));scrollbar-gutter:stable;flex:1;padding-bottom:16px;overflow-y:auto}.qDHVXG_flatList>*+*,.qDHVXG_searchTree>[role=treeitem]+[role=treeitem],.qDHVXG_groupSection>*+*{margin-top:2px}.qDHVXG_searchStatus,.qDHVXG_searchWarning{color:var(--dsw-alias-label-tertiary);padding:10px 12px;font-size:12px;line-height:18px}.qDHVXG_searchWarning{color:var(--dsw-alias-label-secondary)}.qDHVXG_groupSection{position:relative}.qDHVXG_groupSection+.qDHVXG_groupSection{margin-top:4px}.qDHVXG_listTopDropIndicator,.qDHVXG_workspaceDropBefore:before,.qDHVXG_workspaceDropAfter:after{content:\"\";z-index:1;background:linear-gradient(55deg, transparent calc(50% - 1px), var(--dsw-alias-state-business-primary) calc(50% - 1px) calc(50% + 1px), transparent calc(50% + 1px)) 0 0 / 5px 7px no-repeat, linear-gradient(125deg, transparent calc(50% - 1px), var(--dsw-alias-state-business-primary) calc(50% - 1px) calc(50% + 1px), transparent calc(50% + 1px)) 0 5px / 5px 7px no-repeat, linear-gradient(var(--dsw-alias-state-business-primary) 0 0) 4px 5px / calc(100% - 4px) 2px no-repeat;pointer-events:none;height:12px;position:absolute;left:0;right:0}.qDHVXG_listTopDropIndicator{top:-8px;left:0;right:var(--dsh-session-list-edge-inset)}.qDHVXG_listTopDropActive>.qDHVXG_workspaceDropBefore:first-child:before{display:none}.qDHVXG_workspaceDropBefore:before{top:-8px}.qDHVXG_workspaceDropAfter:after{bottom:-8px}.qDHVXG_sessionOverflowButton{cursor:pointer;text-align:left;width:100%;height:28px;color:var(--dsw-alias-label-tertiary);background:0 0;border:none;border-radius:8px;padding:0 12px 0 28px;font-size:12px}.qDHVXG_groupSection>.qDHVXG_sessionOverflowButton{margin-top:0}.qDHVXG_sessionOverflowButton:hover{color:var(--dsw-alias-label-secondary);background:0 0}.qDHVXG_empty{color:var(--dsw-alias-label-tertiary);padding:16px 12px;font-size:13px}.qDHVXG_renameInput{box-sizing:border-box;border:1px solid var(--dsw-alias-border-l2);width:100%;height:44px;color:var(--dsw-alias-label-primary);background:0 0;border-radius:22px;outline:none;padding:7px 14px;font-size:14px;font-weight:400;line-height:22px}.qDHVXG_renameInput:disabled{color:var(--dsw-alias-label-dimmed)}.qDHVXG_renameError{color:var(--dsw-alias-state-error-primary);margin-top:8px;font-size:12px;line-height:18px}.qDHVXG_deleteAction:not(:disabled){color:var(--dsw-alias-state-error-primary)}.qDHVXG_deleteStatus{color:var(--dsw-alias-label-secondary);font-size:12px;line-height:18px}@media (prefers-reduced-motion:reduce){.qDHVXG_wide{animation:none}.qDHVXG_search,.qDHVXG_sectionLabel,.qDHVXG_searchSlot,.qDHVXG_searchInput,.qDHVXG_headerActions{transition:none}}";
+		const css = ".qDHVXG_root{--dsh-session-list-edge-inset:var(--dsh-sidebar-inline-padding);--dsh-session-list-scrollbar-width:8px;--dsh-session-list-scrollbar-offset:2px;box-sizing:border-box;min-height:0;padding-right:var(--dsh-session-list-edge-inset);flex-direction:column;flex:1;display:flex}.qDHVXG_root.qDHVXG_rail{padding-right:0}.qDHVXG_iconButton{cursor:pointer;width:28px;height:28px;color:var(--dsw-alias-label-secondary);background:0 0;border:none;border-radius:50%;flex:none;justify-content:center;align-items:center;padding:0;display:inline-flex}.qDHVXG_iconButton:hover{background:var(--dsw-alias-interactive-bg-hover)}.qDHVXG_sectionHeader{box-sizing:border-box;height:36px;color:var(--dsw-alias-label-tertiary);border-radius:12px;flex:none;justify-content:flex-end;align-items:center;gap:4px;margin-bottom:4px;padding-left:4px;display:flex;overflow:hidden}.qDHVXG_root:not(.qDHVXG_rail) .qDHVXG_sectionHeader{margin-top:2px;margin-right:-4px}.qDHVXG_sectionLabel{white-space:nowrap;opacity:1;visibility:visible;min-width:0;max-width:45%;transition:max-width .18s var(--ds-ease-in-out), margin-right .18s var(--ds-ease-in-out), opacity .12s var(--ds-ease-in-out), transform .18s var(--ds-ease-in-out), visibility 0s linear;flex:none;line-height:20px;overflow:hidden}.qDHVXG_sectionLabelHidden{opacity:0;visibility:hidden;max-width:0;margin-right:-4px;transition-delay:0s,0s,0s,0s,.18s;transform:translate(-4px)}.qDHVXG_searchSlot{box-sizing:border-box;min-width:0;max-width:28px;transition:max-width .18s var(--ds-ease-in-out), padding-left .18s var(--ds-ease-in-out);flex:1;align-items:center;margin-left:auto;padding-left:0;display:flex}.qDHVXG_searchSlotExpanded{max-width:100%;padding-left:0}.qDHVXG_headerActions{opacity:1;visibility:visible;max-width:160px;transition:max-width .18s var(--ds-ease-in-out), opacity .12s var(--ds-ease-in-out), transform .18s var(--ds-ease-in-out), visibility 0s linear;flex:none;align-items:center;gap:4px;display:flex;overflow:hidden}.qDHVXG_headerActionsHidden{opacity:0;visibility:hidden;pointer-events:none;max-width:0;transition-delay:0s,0s,0s,.18s;transform:translate(4px)}.qDHVXG_search{box-sizing:border-box;cursor:text;width:100%;height:28px;color:var(--dsw-alias-label-secondary);transition:width .18s var(--ds-ease-in-out), padding .18s var(--ds-ease-in-out), border-color .18s var(--ds-ease-in-out), background-color .18s var(--ds-ease-in-out);background:0 0;border:none;border-radius:50%;flex:none;align-items:center;gap:0;margin:0;padding:0;display:flex;overflow:hidden}.qDHVXG_searchExpanded{border:1px solid var(--dsw-alias-border-l2);width:calc(100% + 4px);height:30px;color:var(--dsw-alias-label-caption);background:0 0;border-radius:10px;margin-inline:-2px;padding:0 4px 0 0}.qDHVXG_searchButton{cursor:pointer;width:28px;height:28px;color:inherit;background:0 0;border:none;border-radius:50%;flex:none;justify-content:center;align-items:center;padding:0;display:inline-flex}.qDHVXG_searchExpanded .qDHVXG_searchButton{width:28px;height:30px}.qDHVXG_searchButton:hover{background:var(--dsw-alias-interactive-bg-hover)}.qDHVXG_searchExpanded .qDHVXG_searchButton:hover{background:0 0}.qDHVXG_searchInput{opacity:0;pointer-events:none;width:0;min-width:0;color:var(--dsw-alias-label-primary);transition:opacity .12s var(--ds-ease-in-out);background:0 0;border:none;outline:none;flex:1;font-size:13px;line-height:18px}.qDHVXG_searchExpanded .qDHVXG_searchInput{opacity:1;pointer-events:auto;margin-left:-2px}.qDHVXG_searchInput::placeholder{color:var(--dsw-alias-label-tertiary)}.qDHVXG_clearButton{cursor:pointer;width:24px;height:24px;color:var(--dsw-alias-label-secondary);background:0 0;border:none;border-radius:50%;flex:none;justify-content:center;align-items:center;padding:0;display:inline-flex}.qDHVXG_clearButton:hover{background:var(--dsw-alias-interactive-bg-hover)}.qDHVXG_rail .qDHVXG_sectionHeader{justify-content:flex-start;gap:0;margin-bottom:12px;padding-left:0}.qDHVXG_rail .qDHVXG_headerActions{max-width:none}.qDHVXG_rail .qDHVXG_iconButton{width:36px;height:36px;color:var(--dsw-alias-label-primary)}.qDHVXG_rail .qDHVXG_search{background:0 0;border-color:#0000;gap:0;width:36px;height:36px;margin:0 0 12px;padding:0}.qDHVXG_rail .qDHVXG_searchButton{width:36px;height:36px;color:var(--dsw-alias-label-primary)}.qDHVXG_rail .qDHVXG_searchButton:hover{background:var(--dsw-alias-interactive-bg-hover)}.qDHVXG_listArea{min-height:0;margin-left:-4px;margin-right:calc(-1 * var(--dsh-session-list-edge-inset));flex-direction:column;flex:1;padding-left:4px;display:flex;overflow:visible}.qDHVXG_rail .qDHVXG_listArea{margin-left:0;margin-right:0;padding-left:0}.qDHVXG_treeBody{flex-direction:column;flex:1;min-height:0;display:flex;position:relative}.qDHVXG_fade{left:0;right:var(--dsh-session-list-edge-inset);background:linear-gradient(to bottom, transparent, var(--dsw-specific-sidebar-fill));pointer-events:none;height:24px;position:absolute;bottom:0}.qDHVXG_wide{animation:qDHVXG_wide-in .2s var(--ds-ease-in-out)}@keyframes qDHVXG_wide-in{0%{opacity:0}}.qDHVXG_list{min-height:0;margin-left:-4px;margin-right:var(--dsh-session-list-scrollbar-offset);padding-left:4px;padding-right:calc(var(--dsh-session-list-edge-inset) - var(--dsh-session-list-scrollbar-width) - var(--dsh-session-list-scrollbar-offset));scrollbar-gutter:stable;flex:1;padding-bottom:16px;overflow-y:auto}.qDHVXG_flatList>*+*,.qDHVXG_searchTree>[role=treeitem]+[role=treeitem],.qDHVXG_groupSection>*+*{margin-top:2px}.qDHVXG_searchStatus,.qDHVXG_searchWarning{color:var(--dsw-alias-label-tertiary);padding:10px 12px;font-size:12px;line-height:18px}.qDHVXG_searchWarning{color:var(--dsw-alias-label-secondary)}.qDHVXG_groupSection{position:relative}.qDHVXG_groupSection+.qDHVXG_groupSection{margin-top:4px}.qDHVXG_listTopDropIndicator,.qDHVXG_workspaceDropBefore:before,.qDHVXG_workspaceDropAfter:after{content:\"\";z-index:1;background:linear-gradient(55deg, transparent calc(50% - 1px), var(--dsw-alias-state-business-primary) calc(50% - 1px) calc(50% + 1px), transparent calc(50% + 1px)) 0 0 / 5px 7px no-repeat, linear-gradient(125deg, transparent calc(50% - 1px), var(--dsw-alias-state-business-primary) calc(50% - 1px) calc(50% + 1px), transparent calc(50% + 1px)) 0 5px / 5px 7px no-repeat, linear-gradient(var(--dsw-alias-state-business-primary) 0 0) 4px 5px / calc(100% - 4px) 2px no-repeat;pointer-events:none;height:12px;position:absolute;left:0;right:0}.qDHVXG_listTopDropIndicator{top:-8px;left:0;right:var(--dsh-session-list-edge-inset)}.qDHVXG_listTopDropActive>.qDHVXG_workspaceDropBefore:first-child:before{display:none}.qDHVXG_workspaceDropBefore:before{top:-8px}.qDHVXG_workspaceDropAfter:after{bottom:-8px}.qDHVXG_sessionOverflowButton{cursor:pointer;text-align:left;width:100%;height:28px;color:var(--dsw-alias-label-tertiary);background:0 0;border:none;border-radius:8px;padding:0 12px 0 28px;font-size:12px}.qDHVXG_groupSection>.qDHVXG_sessionOverflowButton{margin-top:0}.qDHVXG_sessionOverflowButton:hover{color:var(--dsw-alias-label-secondary);background:0 0}.qDHVXG_empty{color:var(--dsw-alias-label-tertiary);padding:16px 12px;font-size:13px}.qDHVXG_renameInput{box-sizing:border-box;border:1px solid var(--dsw-alias-border-l2);width:100%;height:44px;color:var(--dsw-alias-label-primary);background:0 0;border-radius:22px;outline:none;padding:7px 14px;font-size:14px;font-weight:400;line-height:22px}.qDHVXG_renameInput:disabled{color:var(--dsw-alias-label-dimmed)}.qDHVXG_renameError{color:var(--dsw-alias-state-error-primary);margin-top:8px;font-size:12px;line-height:18px}.qDHVXG_deleteAction:not(:disabled){color:var(--dsw-alias-state-error-primary)}.qDHVXG_deleteStatus{color:var(--dsw-alias-label-secondary);font-size:12px;line-height:18px}@media (prefers-reduced-motion:reduce){.qDHVXG_wide{animation:none}.qDHVXG_search,.qDHVXG_sectionLabel,.qDHVXG_searchSlot,.qDHVXG_searchInput,.qDHVXG_headerActions{transition:none}}";
 		const tagId = "@deepseek-ai/dsh-client-ui-workspace/WorkspaceBrowser.module.css";
 		if (typeof document !== "undefined" && document.querySelector("style[data-plugin-css=" + JSON.stringify(tagId) + "]") === null) {
 			const tag = document.createElement("style");
@@ -1205,6 +1366,44 @@ return a.id < b.id ? -1 : 1;
 			if (typeof navigator !== "undefined" && /^zh/i.test(navigator.language || "")) return zh;
 			return en;
 		}
+		/** Filter menu: all / running / archived / current workspace. */
+		function FilterMenu({ filter, onPick, t }) {
+			const [open, setOpen] = (0, react.useState)(false);
+			return (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Menu, {
+				open,
+				onClose: () => {
+					setOpen(false);
+				},
+				items: [
+					{ id: "all", label: uiLabel("全部", "All") },
+					{ id: "running", label: uiLabel("运行中", "Running") },
+					{ id: "archived", label: uiLabel("已归档", "Archived") },
+					{ id: "currentWorkspace", label: uiLabel("当前工作区", "Current workspace") }
+				],
+				selectedIds: [filter],
+				onSelect: (id) => {
+					onPick(id);
+					setOpen(false);
+				},
+				align: "end",
+				dense: true,
+				portal: true,
+				anchor: (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Tooltip, {
+					label: uiLabel("筛选", "Filter"),
+					side: "bottom",
+					delayMs: 500,
+					children: (0, react_jsx_runtime.jsx)("button", {
+						type: "button",
+						className: clsx(WorkspaceBrowser_module_css_default.iconButton, WorkspaceBrowser_module_css_default.wide),
+						"aria-label": uiLabel("筛选会话", "Filter sessions"),
+						onClick: () => {
+							setOpen((v) => !v);
+						},
+						children: (0, react_jsx_runtime.jsx)("span", { style: { fontSize: 14, lineHeight: 1 }, children: "⚲" })
+					})
+				})
+			});
+		}
 		/** Grouping and ordering menu; own open state so it resets with the wide chrome. */
 		function ViewOptionsMenu({ groupBy, orderBy, onGroupPick, onOrderPick, t }) {
 			const [open, setOpen] = (0, react.useState)(false);
@@ -1295,16 +1494,27 @@ return a.id < b.id ? -1 : 1;
 		*/
 		function buildSessionTree(sessions) {
 			const byId = new Map(sessions.map((node) => [node.id, node]));
-			for (const node of sessions) node.children = [];
+			for (const node of sessions) {
+				node.children = [];
+				delete node.orphan;
+				delete node.cycle;
+			}
 			const roots = [];
 			for (const node of sessions) {
 				const parentId = node.parentId;
 				const parent = parentId !== void 0 && parentId !== node.id ? byId.get(parentId) : void 0;
-				if (parent === void 0) roots.push(node);
-				else parent.children.push(node);
+				if (parent === void 0) {
+					if (parentId !== void 0 && parentId !== node.id) node.orphan = true;
+					roots.push(node);
+				} else {
+					parent.children.push(node);
+				}
 			}
 			if (roots.length === 0 && sessions.length > 0) {
-				for (const node of sessions) node.children = [];
+				for (const node of sessions) {
+					node.cycle = true;
+					node.children = [];
+				}
 				return sessions.slice();
 			}
 			return roots;
@@ -1340,12 +1550,60 @@ return a.id < b.id ? -1 : 1;
 			}
 			return count;
 		}
+		/** Build a nodeId -> ancestor-title array map for a session tree. */
+		function buildPathMap(roots) {
+			const map = new Map();
+			const walk = (nodes, ancestors) => {
+				for (const node of nodes) {
+					map.set(node.id, ancestors.map((a) => a.title));
+					walk(node.children ?? [], [...ancestors, node]);
+				}
+			};
+			walk(roots, []);
+			return map;
+		}
+		/** Build a nodeId -> sibling node array map for a session tree. */
+		function buildSiblingsMap(roots) {
+			const map = new Map();
+			const walk = (nodes) => {
+				for (const node of nodes) {
+					const siblings = nodes.filter((n) => n.id !== node.id);
+					map.set(node.id, siblings);
+					walk(node.children ?? []);
+				}
+			};
+			walk(roots);
+			return map;
+		}
+		/** Collect ids of nodes that have at least one child (branch nodes). */
+		function collectBranchIds(sessions) {
+			const byId = new Map();
+			for (const session of sessions) {
+				if (session === void 0) continue;
+				byId.set(session.id, { id: session.id, parentId: session.parentId, children: [] });
+			}
+			const roots = [];
+			for (const node of byId.values()) {
+				const parent = node.parentId !== void 0 && node.parentId !== node.id ? byId.get(node.parentId) : void 0;
+				if (parent === void 0) roots.push(node);
+				else parent.children.push(node);
+			}
+			const ids = [];
+			const walk = (nodes) => {
+				for (const node of nodes) {
+					if ((node.children || []).length > 0) ids.push(node.id);
+					walk(node.children || []);
+				}
+			};
+			walk(roots);
+			return ids;
+		}
 		/** The scrolling session tree; unmounting drops the sessions subscription and expand-all state. */
-		function SessionTree({ useSessions, startSession, open, forkSession, workspaces, archivedSessionIds, onRenameRequest, onDeleteRequest, onSessionRename, onSessionArchive, insertWorkspaceBefore, insertSessionBefore, orderBy, groupExpansion, setGroupExpanded, sessionOrderByAccount, sessionUpdatedAtByAccount, syncSessionOrderAccount, setSessionOrder, t }) {
+		function SessionTree({ useSessions, startSession, open, forkSession, workspaces, archivedSessionIds, onRenameRequest, onDeleteRequest, onSessionRename, onSessionArchive, insertWorkspaceBefore, insertSessionBefore, orderBy, groupExpansion, setGroupExpanded, sessionOrderByAccount, sessionUpdatedAtByAccount, syncSessionOrderAccount, setSessionOrder, collapsedBranchesByAccount, setBranchCollapsed, setAllBranchesCollapsed, filter = "all", selectionMode = false, selectedIds, onToggleSelect, t }) {
 			const list = useSessions((s) => s);
 			const current = list.current;
 			const [expandedSessionGroups, setExpandedSessionGroups] = (0, react.useState)([]);
-			const [collapsedSessionIds, setCollapsedSessionIds] = (0, react.useState)(() => new Set());
+			const [activeId, setActiveId] = (0, react.useState)(current ?? null);
 			const [drag, setDrag] = (0, react.useState)(null);
 			const sessionDropCommitted = (0, react.useRef)(false);
 			const [workspaceDrag, setWorkspaceDrag] = (0, react.useState)(null);
@@ -1412,23 +1670,28 @@ return a.id < b.id ? -1 : 1;
 			const orderedUngroupedSessionIds = (0, react.useMemo)(() => reconciledSessionOrder(ungroupedSessionIds, sessionOrderByAccount[""]), [sessionOrderByAccount, ungroupedSessionIds]);
 			const groups = (0, react.useMemo)(() => deriveGroups(list, orderedWorkspaces, archivedSessionIds, {
 				expandedGroups,
+				filter,
 				...sessionOrderByAccount[""] === void 0 ? {} : { ungroupedOrder: sessionOrderByAccount[""] }
 			}), [
 				list,
 				orderedWorkspaces,
 				archivedSessionIds,
 				expandedGroups,
+				filter,
 				sessionOrderByAccount
 			]);
 			const sessionTreeByGroup = (0, react.useMemo)(() => {
 				const map = new Map();
 				for (const group of groups) {
 					const sessionTree = buildSessionTree(group.sessions);
-					const sessionRows = flattenSessionTree(sessionTree, 0, [], /* @__PURE__ */ new Set(), collapsedSessionIds);
-					map.set(group.key, { sessionTree, sessionRows });
+					const collapsed = new Set(collapsedBranchesByAccount[group.key] || []);
+					const sessionRows = flattenSessionTree(sessionTree, 0, [], /* @__PURE__ */ new Set(), collapsed);
+					const pathByNode = buildPathMap(sessionTree);
+					const siblingsByNode = buildSiblingsMap(sessionTree);
+					map.set(group.key, { sessionTree, sessionRows, pathByNode, siblingsByNode });
 				}
 				return map;
-			}, [groups, collapsedSessionIds]);
+			}, [groups, collapsedBranchesByAccount]);
 			(0, react.useEffect)(() => {
 				if (current === void 0) return;
 				const group = groups.find((candidate) => candidate.sessions.some((session) => session.id === current));
@@ -1446,29 +1709,108 @@ return a.id < b.id ? -1 : 1;
 				sessionTreeByGroup
 			]);
 			(0, react.useEffect)(() => {
-				if (current === void 0 || collapsedSessionIds.size === 0) return;
-				const next = new Set(collapsedSessionIds);
-				let changed = false;
-				for (const tree of sessionTreeByGroup.values()) {
+				if (current === void 0) return;
+				for (const [accountKey, tree] of sessionTreeByGroup) {
 					const ancestors = findSessionAncestors(tree.sessionTree, current);
 					if (ancestors === null) continue;
+					const collapsed = new Set(collapsedBranchesByAccount[accountKey] || []);
 					for (const ancestorId of ancestors) {
-						if (next.delete(ancestorId)) changed = true;
+						if (collapsed.has(ancestorId)) setBranchCollapsed(accountKey, ancestorId, false);
 					}
 				}
-				if (changed) setCollapsedSessionIds(next);
 			}, [
 				current,
 				sessionTreeByGroup,
-				collapsedSessionIds
+				collapsedBranchesByAccount,
+				setBranchCollapsed
 			]);
-			const toggleCollapsedSession = (id) => {
-				setCollapsedSessionIds((prev) => {
-					const next = new Set(prev);
-					if (next.has(id)) next.delete(id);
-					else next.add(id);
-					return next;
-				});
+			const toggleCollapsedSession = (accountKey, id) => {
+				const collapsed = new Set(collapsedBranchesByAccount[accountKey] || []);
+				setBranchCollapsed(accountKey, id, !collapsed.has(id));
+			};
+			const visibleRows = (0, react.useMemo)(() => {
+				const rows = [];
+				for (const [accountKey, tree] of sessionTreeByGroup) {
+					const treeRows = expandedSessionGroups.includes(accountKey) ? tree.sessionRows : tree.sessionRows.slice(0, COLLAPSED_SESSION_LIMIT);
+					for (const row of treeRows) {
+						rows.push({
+							accountKey,
+							node: row.node,
+							depth: row.depth,
+							path: tree.pathByNode.get(row.node.id) || [],
+							siblings: tree.siblingsByNode.get(row.node.id) || []
+						});
+					}
+				}
+				return rows;
+			}, [sessionTreeByGroup, expandedSessionGroups]);
+			(0, react.useEffect)(() => {
+				if (current !== void 0) setActiveId(current);
+			}, [current]);
+			(0, react.useEffect)(() => {
+				if (visibleRows.length === 0) return;
+				if (activeId === null || !visibleRows.some((row) => row.node.id === activeId)) {
+					setActiveId(visibleRows[0].node.id);
+				}
+			}, [activeId, visibleRows]);
+			const handleTreeKeyDown = (e, node) => {
+				const index = visibleRows.findIndex((row) => row.node.id === node.id);
+				if (index === -1) return;
+				const row = visibleRows[index];
+				const prevent = () => {
+					e.preventDefault();
+					e.stopPropagation();
+				};
+				if (e.key === "ArrowDown") {
+					if (index < visibleRows.length - 1) setActiveId(visibleRows[index + 1].node.id);
+					prevent();
+				} else if (e.key === "ArrowUp") {
+					if (index > 0) setActiveId(visibleRows[index - 1].node.id);
+					prevent();
+				} else if (e.key === "ArrowRight") {
+					const children = node.children || [];
+					if (children.length > 0) {
+						const collapsed = new Set(collapsedBranchesByAccount[row.accountKey] || []).has(node.id);
+						if (collapsed) {
+							setBranchCollapsed(row.accountKey, node.id, false);
+						} else {
+							const firstChildRow = visibleRows.find((candidate) => candidate.node.id === children[0].id);
+							if (firstChildRow) setActiveId(firstChildRow.node.id);
+						}
+						prevent();
+					}
+				} else if (e.key === "ArrowLeft") {
+					const children = node.children || [];
+					const collapsed = new Set(collapsedBranchesByAccount[row.accountKey] || []).has(node.id);
+					if (children.length > 0 && !collapsed) {
+						setBranchCollapsed(row.accountKey, node.id, true);
+					} else if (index > 0) {
+						const parentRow = visibleRows.slice(0, index).reverse().find((candidate) => candidate.depth < row.depth);
+						if (parentRow) setActiveId(parentRow.node.id);
+					}
+					prevent();
+				} else if (e.key === "Home") {
+					if (visibleRows.length > 0) setActiveId(visibleRows[0].node.id);
+					prevent();
+				} else if (e.key === "End") {
+					if (visibleRows.length > 0) setActiveId(visibleRows[visibleRows.length - 1].node.id);
+					prevent();
+				} else if (e.key === "Enter" || e.key === " ") {
+					open(node.id);
+					prevent();
+				}
+			};
+			const jumpSibling = (dir, id) => {
+				const row = visibleRows.find((candidate) => candidate.node.id === id);
+				if (!row || row.siblings.length < 2) return;
+				const index = row.siblings.findIndex((sibling) => sibling.id === id);
+				if (index === -1) return;
+				const length = row.siblings.length;
+				const target = dir === "prev" ? row.siblings[(index - 1 + length) % length] : row.siblings[(index + 1) % length];
+				if (target) {
+					setActiveId(target.id);
+					open(target.id);
+				}
 			};
 			const now = Date.now();
 			const commitSessionDrag = (activeDrag, over) => {
@@ -1602,14 +1944,22 @@ return a.id < b.id ? -1 : 1;
 										return (0, react_jsx_runtime.jsx)(SessionNodeItem, {
 											node,
 											depth,
-											collapsed: collapsedSessionIds.has(node.id),
-											onToggleCollapse: node.children !== void 0 && node.children.length > 0 ? toggleCollapsedSession : void 0,
+											collapsed: (collapsedBranchesByAccount[group.key] || []).includes(node.id),
+											onToggleCollapse: node.children !== void 0 && node.children.length > 0 ? (id) => toggleCollapsedSession(group.key, id) : void 0,
 											currentId: current,
 											now,
 											onOpen: open,
 											onRename: onSessionRename,
 											onFork: forkSession,
 											onArchive: onSessionArchive,
+											path: tree?.pathByNode.get(node.id) || [],
+											siblings: tree?.siblingsByNode.get(node.id) || [],
+											onJumpSibling: jumpSibling,
+											tabIndex: activeId === node.id ? 0 : -1,
+											onKeyDown: handleTreeKeyDown,
+											selectionMode,
+											selected: selectedIds ? selectedIds.has(node.id) : false,
+											onToggleSelect,
 											drag: {
 												start: () => {
 													sessionDropCommitted.current = false;
@@ -1666,9 +2016,9 @@ return a.id < b.id ? -1 : 1;
 			});
 		}
 		/** The flat "In one list" body: every session is one draggable top-level row. */
-		function FlatList({ useSessions, open, forkSession, onSessionRename, onSessionArchive, archivedSessionIds, orderBy, sessionOrderByAccount, sessionUpdatedAtByAccount, syncSessionOrderAccount, setSessionOrder, t }) {
+		function FlatList({ useSessions, open, forkSession, onSessionRename, onSessionArchive, archivedSessionIds, orderBy, sessionOrderByAccount, sessionUpdatedAtByAccount, syncSessionOrderAccount, setSessionOrder, filter = "all", selectionMode = false, selectedIds, onToggleSelect, t }) {
 			const list = useSessions((s) => s);
-			const baseRows = (0, react.useMemo)(() => deriveFlat(list, archivedSessionIds, orderBy), [list, archivedSessionIds, orderBy]);
+			const baseRows = (0, react.useMemo)(() => deriveFlat(list, archivedSessionIds, orderBy, filter), [list, archivedSessionIds, orderBy, filter]);
 			const sessionIds = (0, react.useMemo)(() => baseRows.map((row) => row.id), [baseRows]);
 			const previousOrderBy = (0, react.useRef)(orderBy);
 			(0, react.useEffect)(() => {
@@ -1745,6 +2095,9 @@ return a.id < b.id ? -1 : 1;
 							onFork: forkSession,
 							onArchive: onSessionArchive,
 							flat: true,
+							selectionMode,
+							selected: selectedIds ? selectedIds.has(node.id) : false,
+							onToggleSelect,
 							drag: {
 								start: () => {
 									dropCommitted.current = false;
@@ -1847,6 +2200,7 @@ return a.id < b.id ? -1 : 1;
 		*/
 		function WorkspaceBrowser({ wide, expandSidebar, useSessions, useWorkspaces, useStore, actions, startSession, open, renameSession, forkSession, renameWorkspace, deleteWorkspace, insertWorkspaceBefore, archiveSession, insertSessionBefore, createWorkspace, searchSessions, searchResultLimit, refreshSessions, useDirectoryFlow, renderSlot, t }) {
 			const workspaces = useWorkspaces((state) => state.items);
+			const list = useSessions((s) => s);
 			const workspacePhase = useWorkspaces((state) => state.phase);
 			const archivedSessionIds = useWorkspaces((state) => state.archivedSessionIds);
 			const directoryFlowAvailable = useDirectoryFlow((occupied) => occupied);
@@ -1855,8 +2209,28 @@ return a.id < b.id ? -1 : 1;
 			const groupExpansion = useStore((s) => s.groupExpansion);
 			const sessionOrderByAccount = useStore((s) => s.sessionOrderByAccount);
 			const sessionUpdatedAtByAccount = useStore((s) => s.sessionUpdatedAtByAccount);
+			const collapsedBranchesByAccount = useStore((s) => s.collapsedBranchesByAccount);
+			const filter = useStore((s) => s.filter);
 			const allWorkspaceKeys = (0, react.useMemo)(() => ["", ...workspaces.map((workspace) => workspace.workspaceId)], [workspaces]);
 			const allGroupsExpanded = allWorkspaceKeys.length > 0 && allWorkspaceKeys.every((key) => groupExpansion[key] === true);
+			const branchIdsByAccount = (0, react.useMemo)(() => {
+				const map = new Map();
+				const accounted = new Set();
+				for (const workspace of workspaces) {
+					const sessions = workspace.sessionIds.map((id) => list.byId[id]).filter((s) => s !== void 0 && !s.blank);
+					for (const id of workspace.sessionIds) accounted.add(id);
+					map.set(workspace.workspaceId, collectBranchIds(sessions));
+				}
+				const ungroupedSessions = list.ids.filter((id) => list.byId[id] !== void 0 && !accounted.has(id)).map((id) => list.byId[id]).filter((s) => s !== void 0 && !s.blank);
+				map.set("", collectBranchIds(ungroupedSessions));
+				return map;
+			}, [list, workspaces]);
+			const allBranchesCollapsed = allWorkspaceKeys.length > 0 && allWorkspaceKeys.every((key) => {
+				const ids = branchIdsByAccount.get(key) || [];
+				if (ids.length === 0) return true;
+				const collapsed = new Set(collapsedBranchesByAccount[key] || []);
+				return ids.every((id) => collapsed.has(id));
+			});
 			(0, react.useEffect)(() => {
 				if (workspacePhase !== "ready") return;
 				actions.retainAccountKeys([
@@ -1884,6 +2258,31 @@ return a.id < b.id ? -1 : 1;
 			const wsPlusRef = (0, react.useRef)(null);
 			const composingRef = (0, react.useRef)(false);
 			const [searchOnExpand, setSearchOnExpand] = (0, react.useState)(false);
+			const [selectionMode, setSelectionMode] = (0, react.useState)(false);
+			const [selectedIds, setSelectedIds] = (0, react.useState)(() => new Set());
+			const toggleSelect = (id) => {
+				setSelectedIds((prev) => {
+					const next = new Set(prev);
+					if (next.has(id)) next.delete(id);
+					else next.add(id);
+					return next;
+				});
+			};
+			const clearSelection = () => {
+				setSelectedIds(new Set());
+				setSelectionMode(false);
+			};
+			const archiveSelected = () => {
+				for (const id of selectedIds) {
+					archiveSession(id).catch((reason) => {
+						console.warn("batch archive rejected:", reason);
+					});
+				}
+				clearSelection();
+			};
+			(0, react.useEffect)(() => {
+				if (!selectionMode && selectedIds.size > 0) setSelectedIds(new Set());
+			}, [selectionMode, selectedIds]);
 			(0, react.useEffect)(() => {
 				if (wide && searchOnExpand) {
 					const timer = window.setTimeout(() => {
@@ -1919,6 +2318,38 @@ return a.id < b.id ? -1 : 1;
 				normalizedQuery,
 				wide,
 				searchExpanded
+			]);
+			(0, react.useEffect)(() => {
+				const onKeyDown = (event) => {
+					const target = event.target;
+					const typing = target instanceof HTMLElement && (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable === true);
+					if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "k") {
+						event.preventDefault();
+						if (!wide) {
+							setSearchExpanded(true);
+							setSearchOnExpand(true);
+							expandSidebar();
+						} else {
+							setSearchExpanded(true);
+							window.setTimeout(() => searchInput.current?.focus({ preventScroll: true }), 0);
+						}
+					} else if (!typing && (event.ctrlKey || event.metaKey) && event.shiftKey && event.key.toLowerCase() === "e") {
+						event.preventDefault();
+						for (const key of allWorkspaceKeys) actions.setGroupExpanded(key, true);
+					} else if (!typing && (event.ctrlKey || event.metaKey) && event.shiftKey && event.key.toLowerCase() === "c") {
+						event.preventDefault();
+						for (const key of allWorkspaceKeys) actions.setGroupExpanded(key, false);
+					}
+				};
+				document.addEventListener("keydown", onKeyDown);
+				return () => {
+					document.removeEventListener("keydown", onKeyDown);
+				};
+			}, [
+				wide,
+				allWorkspaceKeys,
+				actions,
+				expandSidebar
 			]);
 			(0, react.useEffect)(() => {
 				if (normalizedQuery === "") {
@@ -2078,6 +2509,23 @@ return a.id < b.id ? -1 : 1;
 											children: allGroupsExpanded ? (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.IconFolderClose16, {}) : (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.IconFolderOpen16, {})
 										})
 									}),
+								groupBy !== "flat" && (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Tooltip, {
+									label: allBranchesCollapsed ? uiLabel("全部展开分支", "Expand all branches") : uiLabel("全部折叠分支", "Collapse all branches"),
+									side: "bottom",
+									delayMs: 500,
+									children: (0, react_jsx_runtime.jsx)("button", {
+										type: "button",
+										className: clsx(WorkspaceBrowser_module_css_default.iconButton, WorkspaceBrowser_module_css_default.wide),
+										"aria-label": allBranchesCollapsed ? uiLabel("全部展开分支", "Expand all branches") : uiLabel("全部折叠分支", "Collapse all branches"),
+										onClick: () => {
+											const next = !allBranchesCollapsed;
+											for (const key of allWorkspaceKeys) {
+												actions.setAllBranchesCollapsed(key, branchIdsByAccount.get(key) || [], next);
+											}
+										},
+										children: (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.IconBranchOutline16, { size: 13 })
+									})
+								}),
 									typeof refreshSessions === "function" && (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Tooltip, {
 										label: uiLabel("刷新", "Refresh"),
 										side: "bottom",
@@ -2156,6 +2604,27 @@ return a.id < b.id ? -1 : 1;
 							(0, react_jsx_runtime.jsxs)("div", {
 								className: clsx(WorkspaceBrowser_module_css_default.headerActions, wide && searchExpanded && WorkspaceBrowser_module_css_default.headerActionsHidden),
 								children: [
+								wide && (0, react_jsx_runtime.jsx)(FilterMenu, {
+									filter,
+									onPick: actions.setFilter,
+									t
+								}),
+								wide && (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Tooltip, {
+									label: selectionMode ? uiLabel("退出选择", "Exit select") : uiLabel("批量选择", "Select multiple"),
+									side: "bottom",
+									delayMs: 500,
+									children: (0, react_jsx_runtime.jsx)("button", {
+										type: "button",
+										className: clsx(WorkspaceBrowser_module_css_default.iconButton, WorkspaceBrowser_module_css_default.wide),
+										"aria-label": uiLabel("批量选择", "Select multiple"),
+										"aria-pressed": selectionMode,
+										onClick: () => {
+											if (selectionMode) clearSelection();
+											else setSelectionMode(true);
+										},
+										children: (0, react_jsx_runtime.jsx)("span", { style: { fontSize: 14, lineHeight: 1 }, children: "☑" })
+									})
+								}),
 								wide && (0, react_jsx_runtime.jsx)(ViewOptionsMenu, {
 									groupBy,
 									orderBy,
@@ -2242,6 +2711,10 @@ return a.id < b.id ? -1 : 1;
 							sessionUpdatedAtByAccount,
 							syncSessionOrderAccount: actions.syncSessionOrderAccount,
 							setSessionOrder: actions.setSessionOrder,
+							filter,
+							selectionMode,
+							selectedIds,
+							onToggleSelect: toggleSelect,
 							t
 						}) : (0, react_jsx_runtime.jsx)(SessionTree, {
 							useSessions,
@@ -2261,6 +2734,13 @@ return a.id < b.id ? -1 : 1;
 							insertWorkspaceBefore,
 							insertSessionBefore,
 							orderBy,
+							collapsedBranchesByAccount,
+							setBranchCollapsed: actions.setBranchCollapsed,
+							setAllBranchesCollapsed: actions.setAllBranchesCollapsed,
+							filter,
+							selectionMode,
+							selectedIds,
+							onToggleSelect: toggleSelect,
 							t,
 							onRenameRequest: (workspaceId, currentTitle) => {
 								setRenameTarget({
@@ -2278,6 +2758,31 @@ return a.id < b.id ? -1 : 1;
 								setDeleteError(null);
 							}
 						}))
+					}),
+					selectionMode && selectedIds.size > 0 && (0, react_jsx_runtime.jsx)("div", {
+						style: {
+							display: "flex",
+							alignItems: "center",
+							gap: 8,
+							padding: "8px 4px",
+							flex: "none"
+						},
+						children: [
+							(0, react_jsx_runtime.jsx)("span", {
+								style: { fontSize: 12, color: "var(--dsw-alias-label-secondary)" },
+								children: `${selectedIds.size} ${uiLabel("个已选", "selected")}`
+							}),
+							(0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Button, {
+								variant: "outline",
+								onClick: archiveSelected,
+								children: uiLabel("批量归档", "Archive selected")
+							}),
+							(0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Button, {
+								variant: "outline",
+								onClick: clearSelection,
+								children: t("cancel")
+							})
+						]
 					}),
 					(0, react_jsx_runtime.jsxs)(_deepseek_ai_dsh_client_ui_primitives.Modal, {
 						open: renameTarget !== null,
