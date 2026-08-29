@@ -1,0 +1,4 @@
+- insert:
+    - id: branch-workspace-folders
+      name: dsh-branch-workspace-folders
+      config: {}

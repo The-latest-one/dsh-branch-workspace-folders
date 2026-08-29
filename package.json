@@ -1,0 +1,87 @@
+{
+  "name": "dsh-branch-workspace-folders",
+  "version": "0.1.0",
+  "description": "DSH Web sidebar plugin: group forked sessions under their root session in the left workspace area.",
+  "private": false,
+  "type": "module",
+  "main": "./lib/index.js",
+  "types": "./lib/types/index.d.ts",
+  "files": [
+    "lib/index.js",
+    "lib/client.js",
+    "lib/client.js.map",
+    "lib/host/**/*.js",
+    "lib/**/*.map",
+    "lib/types/**/*.d.ts",
+    "cordis.patch.yml",
+    "README.md",
+    "LICENSE",
+    "scripts/install-readonly.sh"
+  ],
+  "scripts": {
+    "build": "npm run build:types && npm run build:bundle",
+    "build:types": "tsc -p tsconfig.build.json && node scripts/copy-client-types.mjs",
+    "build:bundle": "tsdown",
+    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.client.json --noEmit",
+    "pack": "npm pack",
+    "test": "node --experimental-strip-types --test tests/*.test.mjs",
+    "pretest": "npm run build"
+  },
+  "dependencies": {},
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "@types/react": "^18.3.0",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "tsdown": "^0.22.14",
+    "typescript": "^5.9.0"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": ">=4.0.1",
+    "@deepseek-ai/dsh-client-runtime": ">=0.0.1-rc.1",
+    "@deepseek-ai/dsh-client-ui-slots": ">=0.0.1-rc.1",
+    "@deepseek-ai/dsh-client-ui-workspace": ">=0.0.1-rc.1",
+    "react": ">=18 <20",
+    "react-dom": ">=18 <20",
+    "@deepseek-ai/dsh-session": ">=0.1.0-rc.1",
+    "@deepseek-ai/dsh-client-ui-sidebar": ">=0.0.1-rc.1"
+  },
+  "exports": {
+    ".": {
+      "types": "./lib/types/index.d.ts",
+      "default": "./lib/index.js"
+    },
+    "./client": {
+      "types": "./lib/types/client/index.d.ts",
+      "default": "./lib/client.js"
+    },
+    "./cordis.patch.yml": "./cordis.patch.yml",
+    "./package.json": "./package.json"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "inject": [
+        "@deepseek-ai/dsh-client-runtime",
+        "@deepseek-ai/dsh-client-ui-slots",
+        "@deepseek-ai/dsh-client-ui-sidebar"
+      ]
+    }
+  },
+  "license": "MIT",
+  "author": "JIaDE-YX",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/JIaDE-YX/dsh-branch-workspace-folders.git"
+  },
+  "keywords": [
+    "dsh",
+    "dsh-plugin",
+    "branch",
+    "workspace",
+    "sidebar"
+  ]
+}

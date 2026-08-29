@@ -1,0 +1,14 @@
+# Dependencies
+node_modules
+
+# Packed artifacts
+*.tgz
+
+# Logs / temp
+*.log
+.DS_Store
+/tmp/
+
+# Local env / secrets
+.env
+*.local
