@@ -1366,40 +1366,69 @@ return a.id < b.id ? -1 : 1;
 			if (typeof navigator !== "undefined" && /^zh/i.test(navigator.language || "")) return zh;
 			return en;
 		}
-		/** Filter menu: all / running / archived / current workspace. */
-		function FilterMenu({ filter, onPick, t }) {
+		/** More menu: consolidates filter, batch-select, tree controls and refresh. */
+		function MoreMenu({ filter, onPickFilter, onBatchSelect, groupBy, allGroupsExpanded, onToggleAllGroups, allBranchesCollapsed, onToggleAllBranches, onRefresh, t }) {
 			const [open, setOpen] = (0, react.useState)(false);
+			const filterId = filter === "running" ? "filter-running" : filter === "archived" ? "filter-archived" : filter === "currentWorkspace" ? "filter-current" : "filter-all";
+			const items = [
+				{ type: "label", id: "filter-label", text: uiLabel("筛选", "Filter") },
+				{ id: "filter-all", label: uiLabel("全部", "All") },
+				{ id: "filter-running", label: uiLabel("运行中", "Running") },
+				{ id: "filter-archived", label: uiLabel("已归档", "Archived") },
+				{ id: "filter-current", label: uiLabel("当前工作区", "Current workspace") },
+				{ type: "separator", id: "sep-batch" },
+				{ id: "batch-select", label: uiLabel("批量选择", "Select multiple"), icon: (0, react_jsx_runtime.jsx)("span", { style: { fontSize: 14, lineHeight: 1 }, children: "☑" }) }
+			];
+			if (groupBy !== "flat") {
+				items.push({ type: "separator", id: "sep-tree" });
+				items.push({
+					id: "toggle-workspaces",
+					label: allGroupsExpanded ? uiLabel("全部折叠工作区", "Collapse all workspaces") : uiLabel("全部展开工作区", "Expand all workspaces"),
+					icon: (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.IconFolderOpen16, { size: 14 })
+				});
+				items.push({
+					id: "toggle-branches",
+					label: allBranchesCollapsed ? uiLabel("全部展开分支", "Expand all branches") : uiLabel("全部折叠分支", "Collapse all branches"),
+					icon: (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.IconBranchOutline16, { size: 13 })
+				});
+			}
+			items.push({ type: "separator", id: "sep-refresh" });
+			items.push({ id: "refresh", label: uiLabel("刷新", "Refresh"), icon: (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.IconRefreshOutline16, {}) });
 			return (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Menu, {
 				open,
 				onClose: () => {
 					setOpen(false);
 				},
-				items: [
-					{ id: "all", label: uiLabel("全部", "All") },
-					{ id: "running", label: uiLabel("运行中", "Running") },
-					{ id: "archived", label: uiLabel("已归档", "Archived") },
-					{ id: "currentWorkspace", label: uiLabel("当前工作区", "Current workspace") }
-				],
-				selectedIds: [filter],
+				items,
+				selectedIds: [filterId],
 				onSelect: (id) => {
-					onPick(id);
 					setOpen(false);
+					if (id === "filter-all") onPickFilter("all");
+					else if (id === "filter-running") onPickFilter("running");
+					else if (id === "filter-archived") onPickFilter("archived");
+					else if (id === "filter-current") onPickFilter("currentWorkspace");
+					else if (id === "batch-select") onBatchSelect();
+					else if (id === "toggle-workspaces") onToggleAllGroups();
+					else if (id === "toggle-branches") onToggleAllBranches();
+					else if (id === "refresh") onRefresh();
 				},
 				align: "end",
 				dense: true,
 				portal: true,
 				anchor: (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Tooltip, {
-					label: uiLabel("筛选", "Filter"),
+					label: uiLabel("更多操作", "More actions"),
 					side: "bottom",
 					delayMs: 500,
 					children: (0, react_jsx_runtime.jsx)("button", {
 						type: "button",
 						className: clsx(WorkspaceBrowser_module_css_default.iconButton, WorkspaceBrowser_module_css_default.wide),
-						"aria-label": uiLabel("筛选会话", "Filter sessions"),
+						"aria-label": uiLabel("更多操作", "More actions"),
+						"aria-haspopup": "menu",
+						"aria-expanded": open,
 						onClick: () => {
 							setOpen((v) => !v);
 						},
-						children: (0, react_jsx_runtime.jsx)("span", { style: { fontSize: 14, lineHeight: 1 }, children: "⚲" })
+						children: (0, react_jsx_runtime.jsx)("span", { style: { fontSize: 14, lineHeight: 1 }, children: "•••" })
 					})
 				})
 			});
@@ -2513,60 +2542,6 @@ return a.id < b.id ? -1 : 1;
 								className: clsx(WorkspaceBrowser_module_css_default.sectionLabel, WorkspaceBrowser_module_css_default.wide, searchExpanded && WorkspaceBrowser_module_css_default.sectionLabelHidden),
 								children: groupBy === "flat" ? t("section.sessions") : t("section.workspaces")
 							}),
-							wide && !searchExpanded && (groupBy !== "flat" || typeof refreshSessions === "function") && (0, react_jsx_runtime.jsx)("div", {
-								style: { display: "inline-flex", alignItems: "center", gap: 4, flex: "none" },
-								children: [
-									groupBy !== "flat" && (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Tooltip, {
-										label: allGroupsExpanded ? uiLabel("全部折叠", "Collapse all") : uiLabel("全部展开", "Expand all"),
-										side: "bottom",
-										delayMs: 500,
-										children: (0, react_jsx_runtime.jsx)("button", {
-											type: "button",
-											className: clsx(WorkspaceBrowser_module_css_default.iconButton, WorkspaceBrowser_module_css_default.wide),
-											"aria-label": allGroupsExpanded ? uiLabel("全部折叠", "Collapse all") : uiLabel("全部展开", "Expand all"),
-											"aria-expanded": allGroupsExpanded,
-											onClick: () => {
-												const next = !allGroupsExpanded;
-												for (const key of allWorkspaceKeys) actions.setGroupExpanded(key, next);
-											},
-											children: allGroupsExpanded ? (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.IconFolderClose16, {}) : (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.IconFolderOpen16, {})
-										})
-									}),
-								groupBy !== "flat" && (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Tooltip, {
-									label: allBranchesCollapsed ? uiLabel("全部展开分支", "Expand all branches") : uiLabel("全部折叠分支", "Collapse all branches"),
-									side: "bottom",
-									delayMs: 500,
-									children: (0, react_jsx_runtime.jsx)("button", {
-										type: "button",
-										className: clsx(WorkspaceBrowser_module_css_default.iconButton, WorkspaceBrowser_module_css_default.wide),
-										"aria-label": allBranchesCollapsed ? uiLabel("全部展开分支", "Expand all branches") : uiLabel("全部折叠分支", "Collapse all branches"),
-										onClick: () => {
-											const next = !allBranchesCollapsed;
-											if (typeof actions.setAllBranchesCollapsed === "function") {
-												for (const key of allWorkspaceKeys) {
-													actions.setAllBranchesCollapsed(key, branchIdsByAccount.get(key) || [], next);
-												}
-											}
-										},
-										children: (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.IconBranchOutline16, { size: 13 })
-									})
-								}),
-									typeof refreshSessions === "function" && (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Tooltip, {
-										label: uiLabel("刷新", "Refresh"),
-										side: "bottom",
-										delayMs: 500,
-										children: (0, react_jsx_runtime.jsx)("button", {
-											type: "button",
-											className: clsx(WorkspaceBrowser_module_css_default.iconButton, WorkspaceBrowser_module_css_default.wide),
-											"aria-label": uiLabel("刷新", "Refresh"),
-											onClick: () => {
-												refreshSessions();
-											},
-											children: (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.IconRefreshOutline16, {})
-										})
-									}),
-								]
-							}),
 							wide && (0, react_jsx_runtime.jsx)("div", {
 								className: clsx(WorkspaceBrowser_module_css_default.searchSlot, searchExpanded && WorkspaceBrowser_module_css_default.searchSlotExpanded),
 								children: (0, react_jsx_runtime.jsxs)("div", {
@@ -2628,56 +2603,84 @@ return a.id < b.id ? -1 : 1;
 							}),
 							(0, react_jsx_runtime.jsxs)("div", {
 								className: clsx(WorkspaceBrowser_module_css_default.headerActions, wide && searchExpanded && WorkspaceBrowser_module_css_default.headerActionsHidden),
+								style: selectionMode ? { maxWidth: "none" } : void 0,
 								children: [
-								wide && (0, react_jsx_runtime.jsx)(FilterMenu, {
-									filter,
-									onPick: (id) => {
-										setLocalFilter(id);
-										if (typeof actions.setFilter === "function") actions.setFilter(id);
-									},
-									t
-								}),
-								wide && (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Tooltip, {
-									label: selectionMode ? uiLabel("退出选择", "Exit select") : uiLabel("批量选择", "Select multiple"),
-									side: "bottom",
-									delayMs: 500,
-									children: (0, react_jsx_runtime.jsx)("button", {
-										type: "button",
-										className: clsx(WorkspaceBrowser_module_css_default.iconButton, WorkspaceBrowser_module_css_default.wide),
-										"aria-label": uiLabel("批量选择", "Select multiple"),
-										"aria-pressed": selectionMode,
-										onClick: () => {
-											if (selectionMode) clearSelection();
-											else setSelectionMode(true);
-										},
-										children: (0, react_jsx_runtime.jsx)("span", { style: { fontSize: 14, lineHeight: 1 }, children: "☑" })
-									})
-								}),
-								wide && (0, react_jsx_runtime.jsx)(ViewOptionsMenu, {
-									groupBy,
-									orderBy,
-									onGroupPick: (mode) => {
-										actions.setGroupBy(mode);
-									},
-									onOrderPick: (mode) => {
-										actions.setOrderBy(mode);
-									},
-									t
-								}), directoryFlowAvailable && (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Tooltip, {
-									label: t("workspace.add"),
-									side: "bottom",
-									delayMs: 500,
-									children: (0, react_jsx_runtime.jsx)("button", {
-										ref: wsPlusRef,
-										type: "button",
-										className: WorkspaceBrowser_module_css_default.iconButton,
-										"aria-label": t("workspace.add"),
-										onClick: () => {
-											setWsPickerOpen((v) => !v);
-										},
-										children: (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.IconProjectAddOutline16, { size: wide ? 16 : 18 })
-									})
-								})]
+								selectionMode && wide ? (0, react_jsx_runtime.jsxs)("div", {
+									style: { display: "inline-flex", alignItems: "center", gap: 8, flex: "none" },
+									children: [
+										(0, react_jsx_runtime.jsx)("span", {
+											style: { fontSize: 12, color: "var(--dsw-alias-label-secondary)", whiteSpace: "nowrap" },
+											children: `${selectedIds.size} ${uiLabel("个已选", "selected")}`
+										}),
+										(0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Button, {
+											variant: "outline",
+											disabled: selectedIds.size === 0,
+											onClick: archiveSelected,
+											children: uiLabel("批量归档", "Archive selected")
+										}),
+										(0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Button, {
+											variant: "outline",
+											onClick: clearSelection,
+											children: t("cancel")
+										})
+									]
+								}) : (0, react_jsx_runtime.jsxs)(react_jsx_runtime.Fragment, {
+									children: [
+										wide && (0, react_jsx_runtime.jsx)(MoreMenu, {
+											filter,
+											onPickFilter: (id) => {
+												setLocalFilter(id);
+												if (typeof actions.setFilter === "function") actions.setFilter(id);
+											},
+											onBatchSelect: () => setSelectionMode(true),
+											groupBy,
+											allGroupsExpanded,
+											onToggleAllGroups: () => {
+												const next = !allGroupsExpanded;
+												for (const key of allWorkspaceKeys) actions.setGroupExpanded(key, next);
+											},
+											allBranchesCollapsed,
+											onToggleAllBranches: () => {
+												const next = !allBranchesCollapsed;
+												if (typeof actions.setAllBranchesCollapsed === "function") {
+													for (const key of allWorkspaceKeys) {
+														actions.setAllBranchesCollapsed(key, branchIdsByAccount.get(key) || [], next);
+													}
+												}
+											},
+											onRefresh: () => {
+												if (typeof refreshSessions === "function") refreshSessions();
+											},
+											t
+										}),
+										wide && (0, react_jsx_runtime.jsx)(ViewOptionsMenu, {
+											groupBy,
+											orderBy,
+											onGroupPick: (mode) => {
+												actions.setGroupBy(mode);
+											},
+											onOrderPick: (mode) => {
+												actions.setOrderBy(mode);
+											},
+											t
+										}), directoryFlowAvailable && (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Tooltip, {
+											label: t("workspace.add"),
+											side: "bottom",
+											delayMs: 500,
+											children: (0, react_jsx_runtime.jsx)("button", {
+												ref: wsPlusRef,
+												type: "button",
+												className: WorkspaceBrowser_module_css_default.iconButton,
+												"aria-label": t("workspace.add"),
+												onClick: () => {
+													setWsPickerOpen((v) => !v);
+												},
+												children: (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.IconProjectAddOutline16, { size: wide ? 16 : 18 })
+											})
+										})
+									]
+								})
+							]
 							}),
 							(0, react_jsx_runtime.jsx)(WorkspacePickFlow, {
 								t,
@@ -2786,31 +2789,6 @@ return a.id < b.id ? -1 : 1;
 								setDeleteError(null);
 							}
 						}))
-					}),
-					selectionMode && selectedIds.size > 0 && (0, react_jsx_runtime.jsx)("div", {
-						style: {
-							display: "flex",
-							alignItems: "center",
-							gap: 8,
-							padding: "8px 4px",
-							flex: "none"
-						},
-						children: [
-							(0, react_jsx_runtime.jsx)("span", {
-								style: { fontSize: 12, color: "var(--dsw-alias-label-secondary)" },
-								children: `${selectedIds.size} ${uiLabel("个已选", "selected")}`
-							}),
-							(0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Button, {
-								variant: "outline",
-								onClick: archiveSelected,
-								children: uiLabel("批量归档", "Archive selected")
-							}),
-							(0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Button, {
-								variant: "outline",
-								onClick: clearSelection,
-								children: t("cancel")
-							})
-						]
 					}),
 					(0, react_jsx_runtime.jsxs)(_deepseek_ai_dsh_client_ui_primitives.Modal, {
 						open: renameTarget !== null,
