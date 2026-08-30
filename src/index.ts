@@ -6,12 +6,13 @@
  * consumes this API to render "branch folders" in the left workspace area.
  */
 import { readdirSync, existsSync, statSync } from 'node:fs'
+import { mkdir, rename, rm } from 'node:fs/promises'
 import { homedir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { readSessionHeader } from './host/zstd.js'
 import { parseSessionLog, type ParsedSession } from './host/session-log.js'
 import { readSessionLogAsync } from './host/zstd.js'
-import { isForkChildLike } from './host/lineage.js'
+import { collectFamilyIds, isForkChildLike } from './host/lineage.js'
 
 export const name = 'dsh-branch-workspace-folders'
 
@@ -87,8 +88,15 @@ interface ClustersCache {
   clusters: BranchClusterDTO[]
 }
 const CLUSTERS_CACHE_TTL_MS = 5000
+const ARCHIVES_CACHE_TTL_MS = 10000
 const MAX_CONCURRENT_PARSES = 4
 let clustersCache: ClustersCache | null = null
+interface ArchivesCache {
+  at: number
+  archivedKey: string
+  sessions: ArchivedSessionDTO[]
+}
+let archivesCache: ArchivesCache | null = null
 
 /** Cheap filesystem fingerprint: directory entries + per-file mtime, no header IO. */
 function sessionFilesSignature(files: SessionFileRef[]): string {
@@ -372,6 +380,308 @@ function filterClustersByCwd(clusters: BranchClusterDTO[], cwd?: string): Branch
   return clusters.filter((cluster) => cluster.sessions.some((session) => session.cwd === cwd))
 }
 
+export interface ArchivedSessionDTO {
+  sessionId: string
+  parentId?: string
+  title: string
+  cwd?: string
+  updatedAt?: number
+  running?: boolean
+  blank?: boolean
+  parentKnown: boolean
+  descendantCount: number
+  missing?: boolean
+}
+
+async function readBody(req: any): Promise<string> {
+  const chunks: Buffer[] = []
+  for await (const chunk of req) {
+    chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk))
+  }
+  return Buffer.concat(chunks).toString('utf8')
+}
+
+function invalidateCaches(): void {
+  sessionsCache = null
+  persistenceCache = null
+  clustersCache = null
+  archivesCache = null
+}
+
+function getWorkspaceRegistry(ctx: AppContext, wctx: any): any {
+  try {
+    return ctx.get?.('workspaceRegistry') ?? wctx?.workspaceRegistry ?? ctx.get?.('workspaces')
+  } catch {
+    return wctx?.workspaceRegistry ?? undefined
+  }
+}
+
+function countParsedDescendants(items: ParsedSession[], sessionId: string): number {
+  const childrenOf = new Map<string, string[]>()
+  for (const item of items) {
+    if (!item.parentId || item.parentId === item.sessionId) continue
+    const list = childrenOf.get(item.parentId) ?? []
+    list.push(item.sessionId)
+    childrenOf.set(item.parentId, list)
+  }
+  let count = 0
+  const seen = new Set<string>([sessionId])
+  const stack = childrenOf.get(sessionId) ?? []
+  while (stack.length > 0) {
+    const id = stack.pop()!
+    if (seen.has(id)) continue
+    seen.add(id)
+    count += 1
+    const next = childrenOf.get(id)
+    if (next) {
+      for (const child of next) stack.push(child)
+    }
+  }
+  return count
+}
+
+async function listArchivedSessions(
+  ctx: AppContext,
+  wctx: any,
+  getPersistence: () => DshPersistence | undefined,
+): Promise<ArchivedSessionDTO[]> {
+  const registry = getWorkspaceRegistry(ctx, wctx)
+  const archivedIds = Array.isArray(registry?.archivedSessionIds) ? registry.archivedSessionIds : []
+  if (archivedIds.length === 0) {
+    archivesCache = null
+    return []
+  }
+
+  const archivedKey = `${archivedIds.length}:${archivedIds.join(',')}`
+  const now = Date.now()
+  if (archivesCache && archivesCache.archivedKey === archivedKey && now - archivesCache.at < ARCHIVES_CACHE_TTL_MS) {
+    return archivesCache.sessions
+  }
+
+  const root = homeSessionsRoot(wctx)
+  const locations = await discoverSessionLocations(wctx, root, getPersistence())
+  const parsed = await parseAllSessions(locations, getPersistence(), ctx.logger)
+  const byId = new Map(parsed.map((s) => [s.sessionId, s]))
+  const liveService = ctx.get?.('sessions')
+  const result: ArchivedSessionDTO[] = []
+
+  for (const id of archivedIds) {
+    const s = byId.get(id)
+    if (!s) {
+      result.push({
+        sessionId: id,
+        title: id,
+        parentKnown: false,
+        descendantCount: 0,
+        missing: true,
+      })
+      continue
+    }
+    const parentKnown = !!s.parentId && s.parentId !== id && (byId.has(s.parentId) || !!liveService?.get?.(s.parentId))
+    const descendantCount = countParsedDescendants(parsed, id)
+
+    result.push({
+      sessionId: id,
+      parentId: s.parentId,
+      title: s.title || id,
+      cwd: s.cwd,
+      updatedAt: s.lastActiveAt,
+      running: s.running,
+      blank: s.blank,
+      parentKnown,
+      descendantCount,
+    })
+  }
+
+  archivesCache = { at: Date.now(), archivedKey, sessions: result }
+  return result
+}
+
+async function purgeSession(
+  ctx: AppContext,
+  wctx: any,
+  sessionId: string,
+  getPersistence: () => DshPersistence | undefined,
+): Promise<{ purged: number }> {
+  const registry = getWorkspaceRegistry(ctx, wctx)
+  if (!registry) throw new Error('workspace registry unavailable')
+  const archivedIds = Array.isArray(registry.archivedSessionIds) ? registry.archivedSessionIds : []
+  if (!archivedIds.includes(sessionId)) throw new Error('只能永久删除已归档的根会话')
+  const root = homeSessionsRoot(wctx)
+  const locations = await discoverSessionLocations(wctx, root, getPersistence())
+  const parsed = await parseAllSessions(locations, getPersistence(), ctx.logger)
+  const byId = new Map(parsed.map((s) => [s.sessionId, s]))
+  // Allow metadata-only purge for archived ids whose log directory is already
+  // missing/corrupt; `collectFamilyIds` still returns the id itself and the
+  // later removal from archivedSessionIds cleans the durable state.
+  const target = byId.get(sessionId) ?? { sessionId, parentId: undefined, title: sessionId } as any
+
+  // Permanent delete is intentionally root-only: it removes the whole fork
+  // tree. Refuse requests that name a child to avoid deleting an unarchived
+  // root the user may not have intended to destroy.
+  const liveService = ctx.get?.('sessions')
+  if (target.parentId && target.parentId !== sessionId && (byId.has(target.parentId) || !!liveService?.get?.(target.parentId))) {
+    throw new Error('只能删除根会话（该会话存在父会话）')
+  }
+
+  const family = collectFamilyIds(parsed, sessionId)
+  for (const id of family) {
+    if (liveService?.get?.(id)) {
+      throw new Error(`会话正在运行或已加载，无法永久删除: ${id}`)
+    }
+  }
+
+  const fileBySession = new Map(locations.map((l) => [l.sessionId, l.file]))
+  const paths: { id: string; dir: string }[] = []
+  for (const id of family) {
+    const file = fileBySession.get(id)
+    if (file) paths.push({ id, dir: dirname(file) })
+  }
+
+  const trashRoot = join(root, '..', '.trash-sessions')
+  await mkdir(trashRoot, { recursive: true })
+  const moved: { dir: string; trashDir: string }[] = []
+
+  const rollbackMoves = async () => {
+    for (const m of moved.reverse()) {
+      try {
+        await rename(m.trashDir, m.dir)
+      } catch {
+        // best-effort rollback
+      }
+    }
+  }
+
+  for (const p of paths) {
+    const trashDir = join(trashRoot, p.id)
+    try {
+      await rename(p.dir, trashDir)
+      moved.push({ dir: p.dir, trashDir })
+    } catch (error: any) {
+      if (error?.code !== 'ENOENT') {
+        await rollbackMoves()
+        throw new Error(`移动会话目录失败: ${String(error?.message ?? error)}`)
+      }
+    }
+  }
+
+  try {
+    const writeArchived = async (ids: string[]) => {
+      const persist = async (state: any) => {
+        if (!state) throw new Error('workspace registry state unavailable')
+        if (registry?.setState) {
+          await registry.setState({ ...state, archivedSessionIds: ids })
+        } else if (registry?.global?.set) {
+          await registry.global.set({ ...state, archivedSessionIds: ids })
+        } else {
+          throw new Error('workspace registry cannot persist archived state')
+        }
+      }
+      if (registry && typeof registry.enqueueOperation === 'function') {
+        await registry.enqueueOperation(async () => {
+          const state = registry.requireState?.()
+          if (!state) throw new Error('workspace registry state unavailable')
+          await persist(state)
+        })
+      } else {
+        const state = registry?.requireState?.() ?? registry?.global?.get?.()
+        await persist(state)
+      }
+    }
+
+    const currentState = registry?.requireState?.() ?? registry?.global?.get?.()
+    const originalArchivedIds = Array.isArray(currentState?.archivedSessionIds) ? currentState.archivedSessionIds : []
+    const nextArchivedIds = originalArchivedIds.filter((id: string) => !family.has(id))
+    await writeArchived(nextArchivedIds)
+
+    const workspaces = registry?.list?.() ?? []
+    const detached: { ws: any; id: string }[] = []
+    try {
+      for (const ws of workspaces) {
+        for (const id of family) {
+          if (Array.isArray(ws.sessionIds) && ws.sessionIds.includes(id)) {
+            try {
+              await ws.detachSession?.(id)
+              detached.push({ ws, id })
+            } catch {
+              // The entity mutator filters invalid/missing paths; ignore if a
+              // session is no longer accounted on this workspace.
+            }
+          }
+        }
+      }
+    } catch (detachError) {
+      // Best-effort rollback: restore archived ids, move directories back, then
+      // re-attach already-detached sessions (attach needs the original dirs).
+      try {
+        await writeArchived(originalArchivedIds)
+      } catch {
+        // ignore secondary rollback failure
+      }
+      await rollbackMoves()
+      for (const d of detached) {
+        try {
+          await d.ws.attachSession?.(d.id)
+        } catch {
+          // best-effort rollback
+        }
+      }
+      throw detachError
+    }
+
+    for (const m of moved) {
+      try {
+        await rm(m.trashDir, { recursive: true, force: true })
+      } catch (error) {
+        ctx.logger?.warn?.(
+          '[branch-workspace] failed to remove trash dir; keeping it for manual cleanup:',
+          m.trashDir,
+          String(error),
+        )
+      }
+    }
+    invalidateCaches()
+    return { purged: family.size }
+  } catch (error) {
+    await rollbackMoves()
+    throw error
+  }
+}
+
+async function restoreSession(ctx: AppContext, wctx: any, sessionId: string): Promise<void> {
+  const registry = getWorkspaceRegistry(ctx, wctx)
+  if (!registry) throw new Error('workspace registry unavailable')
+
+  const persist = async (state: any) => {
+    if (!state) throw new Error('workspace registry state unavailable')
+    const next = {
+      ...state,
+      archivedSessionIds: (state.archivedSessionIds ?? []).filter((id: string) => id !== sessionId),
+    }
+    if (registry?.setState) {
+      await registry.setState(next)
+    } else if (registry?.global?.set) {
+      await registry.global.set(next)
+    } else {
+      throw new Error('workspace registry cannot persist archived state')
+    }
+  }
+
+  const update = async () => {
+    const state = registry.requireState?.()
+    if (!state) throw new Error('workspace registry state unavailable')
+    await persist(state)
+  }
+
+  if (typeof registry.enqueueOperation === 'function') {
+    await registry.enqueueOperation(update)
+  } else {
+    const state = registry.requireState?.() ?? registry?.global?.get?.()
+    await persist(state)
+  }
+  invalidateCaches()
+}
+
 export function apply(ctx: AppContext): (() => void) | void {
   const cleanup: (() => void)[] = []
   let currentPersistence: DshPersistence | undefined
@@ -460,6 +770,48 @@ export function apply(ctx: AppContext): (() => void) | void {
             const cwd = url.searchParams.get('cwd')?.trim()
             const clusters = filterClustersByCwd(fullClusters, cwd)
             sendJson(res, 200, { ok: true, data: { clusters } })
+            return
+          }
+
+          if (req.method === 'GET' && pathname === `${API_PREFIX}/archives`) {
+            const sessions = await listArchivedSessions(ctx, wctx, getPersistence)
+            sendJson(res, 200, { ok: true, data: { sessions } })
+            return
+          }
+
+          if (req.method === 'POST' && pathname === `${API_PREFIX}/purge`) {
+            let sessionId = ''
+            try {
+              const body = JSON.parse(await readBody(req) || '{}')
+              sessionId = typeof body.sessionId === 'string' ? body.sessionId : ''
+            } catch {
+              sendJson(res, 400, { ok: false, error: 'invalid JSON body' })
+              return
+            }
+            if (!sessionId) {
+              sendJson(res, 400, { ok: false, error: 'sessionId required' })
+              return
+            }
+            const data = await purgeSession(ctx, wctx, sessionId, getPersistence)
+            sendJson(res, 200, { ok: true, data })
+            return
+          }
+
+          if (req.method === 'POST' && pathname === `${API_PREFIX}/restore`) {
+            let sessionId = ''
+            try {
+              const body = JSON.parse(await readBody(req) || '{}')
+              sessionId = typeof body.sessionId === 'string' ? body.sessionId : ''
+            } catch {
+              sendJson(res, 400, { ok: false, error: 'invalid JSON body' })
+              return
+            }
+            if (!sessionId) {
+              sendJson(res, 400, { ok: false, error: 'sessionId required' })
+              return
+            }
+            await restoreSession(ctx, wctx, sessionId)
+            sendJson(res, 200, { ok: true, data: { restored: sessionId } })
             return
           }
 

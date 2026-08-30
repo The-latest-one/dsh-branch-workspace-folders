@@ -1,8 +1,6 @@
-// @ts-ignore - vendored official WorkspaceBrowser module (CJS)
-declare const require: any
 import { Component } from 'react'
-const WorkspaceBrowserModule = require('../vendor/workspace-browser/client.cjs') as any
-const { WorkspaceBrowser } = WorkspaceBrowserModule as any
+import { WorkspaceBrowser } from './vendor-runtime'
+import { ArchivedSettingsSection, archivedLocales, archivedNamespace } from './archived-settings'
 
 function createSafeWorkspaceBrowser(original: any): any {
   return class SafeWorkspaceBrowser extends Component<any, { failed: boolean }> {
@@ -28,7 +26,7 @@ function createSafeWorkspaceBrowser(original: any): any {
 
 export const name = 'dsh-branch-workspace-folders'
 
-export const inject = ['slots', 'sessions', 'workspaces']
+export const inject = ['slots', 'sessions', 'workspaces', 'locale']
 
 interface ClientContext {
   get(name: string): any
@@ -38,6 +36,29 @@ interface ClientContext {
 export function apply(ctx: ClientContext): void {
   const slots = ctx.get('slots')
   if (!slots || typeof slots.inject !== 'function' || typeof slots.entries !== 'function' || typeof slots.subscribe !== 'function') return
+
+  // Settings UI: archived-session management page.
+  const locale = ctx.get('locale')
+  if (locale && typeof locale.register === 'function' && typeof ctx.effect === 'function') {
+    ctx.effect(() => locale.register(archivedNamespace, archivedLocales), 'dsh-branch-workspace-folders: archive locales')
+  }
+  const t = locale && typeof locale.bind === 'function'
+    ? locale.bind(archivedNamespace)
+    : ((key: string, params?: any) => {
+        const dict: Record<string, string> = typeof navigator !== 'undefined' && /^zh/i.test(navigator.language) ? archivedLocales.zh : archivedLocales.en
+        const template = dict[key] ?? key
+        if (!params) return template
+        return template.replace(/\{(\w+)\}/g, (_: string, name: string) => (name in params ? String(params[name]) : ''))
+      })
+  const ArchivedSection = (props: any) => <ArchivedSettingsSection {...props} t={t} />
+  slots.inject('settings.section', () => slots.register({
+    name: 'settings.section',
+    id: 'branch-workspace-archives',
+    order: 20,
+    label: () => (t('nav') as string) || archivedLocales.zh.nav,
+    locale: archivedNamespace,
+    inject: () => ({ t }),
+  }, ArchivedSection))
 
   // The official ui-workspace entry owns the `sidebar.workspaces.directoryFlow`
   // child declaration (needed for the framework to pass `renderSlot` to
@@ -94,14 +115,16 @@ export function apply(ctx: ClientContext): void {
 
     const originalInit = store.spec.init
     if (typeof originalInit === 'function') {
-      store.spec.init = () => {
+      const wrappedInit = () => {
         const base = originalInit()
         return {
           ...(base || {}),
           collapsedBranchesByAccount: (base && base.collapsedBranchesByAccount) || {},
         }
       }
+      store.spec.init = wrappedInit
       patched.init = originalInit
+      patched.wrappedInit = wrappedInit
     }
 
     return patched
@@ -115,14 +138,10 @@ export function apply(ctx: ClientContext): void {
     if (patched.setAllBranchesCollapsed && store.spec.actions.setAllBranchesCollapsed === patched.setAllBranchesCollapsed) {
       delete store.spec.actions.setAllBranchesCollapsed
     }
-    if (patched.init && store.spec.init && patched.init !== store.spec.init) {
-      // If init was wrapped by us, restore the original. If another plugin also
-      // wrapped it after us, do not clobber their wrapper.
-      // We cannot detect that reliably, so only restore when it still calls our
-      // wrapper identity by checking the function source is not possible. In
-      // practice init is only patched once per page load; restore it directly.
+    if (patched.wrappedInit && store.spec.init === patched.wrappedInit) {
       store.spec.init = patched.init
     }
+    // If another plugin wrapped `init` after us, leave the wrapper in place.
   }
 
   const restoreEntry = (entry: any, state: any) => {

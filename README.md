@@ -18,6 +18,8 @@ DSH Web 左侧工作区/会话栏插件：在官方 `@deepseek-ai/dsh-client-ui-
   - 全局展开/折叠所有工作区；
   - Refresh 按钮（刷新 sessions）；
   - 溢出折叠（默认 5 条后显示 “Show more sessions”）。
+  - 设置页「已归档会话」：在 DSH Settings 中列出已归档会话树，支持恢复（unarchive）和根分支永久删除（级联删除该根及其所有 fork 后代）。
+  - Host API：`GET /branch-workspace/api/archives`、`POST /branch-workspace/api/restore`、`POST /branch-workspace/api/purge`（永久删除使用 `.trash-sessions` 暂存 + registry 更新 + 成功后物理删除，失败自动回滚）。
 
 ## 安装到 DSH profile
 

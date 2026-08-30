@@ -1490,7 +1490,9 @@ return a.id < b.id ? -1 : 1;
 				items.push({
 					id: "toggle-workspaces",
 					label: allGroupsExpanded ? uiLabel("全部折叠工作区", "Collapse all workspaces") : uiLabel("全部展开工作区", "Expand all workspaces"),
-					icon: (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.IconFolderOpen16, { size: 14 })
+					icon: allGroupsExpanded
+						? (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.IconFolderClose16, { size: 14 })
+						: (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.IconFolderOpen16, { size: 14 })
 				});
 				items.push({
 					id: "toggle-branches",
@@ -3649,6 +3651,11 @@ const [deleteTarget, setDeleteTarget] = (0, react.useState)(null);
 		exports.ProjectRowItem = ProjectRowItem;
 		exports.SessionNodeItem = SessionNodeItem;
 		exports.ViewOptionsMenu = ViewOptionsMenu;
+		exports.buildSessionTree = buildSessionTree;
+		exports.flattenSessionTree = flattenSessionTree;
+		exports.findSessionAncestors = findSessionAncestors;
+		exports.countDescendants = countDescendants;
+		exports.collectBranchIds = collectBranchIds;
 		exports.apply = apply;
 		exports.inject = inject;
 
