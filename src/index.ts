@@ -5,8 +5,8 @@
  * groups all forked sessions under their root session. The client sidebar
  * consumes this API to render "branch folders" in the left workspace area.
  */
-import { readdirSync, existsSync, statSync } from 'node:fs'
-import { mkdir, rename, rm } from 'node:fs/promises'
+import { readdirSync, existsSync, statSync, readFileSync } from 'node:fs'
+import { writeFile, mkdir, rename, rm } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { readSessionHeader } from './host/zstd.js'
@@ -97,6 +97,127 @@ interface ArchivesCache {
   sessions: ArchivedSessionDTO[]
 }
 let archivesCache: ArchivesCache | null = null
+
+/**
+ * Persistent metadata cache for archived-session listing.
+ *
+ * DSH headers are cheap and contain the fork graph (id, parentSession, cwd,
+ * createdAt), but archived rows also need title / updatedAt / running / blank
+ * which normally require decompressing the full session log. Cache those
+ * display fields per session keyed by log mtime, so archive pages do not have
+ * to reparse every session on every cold request.
+ */
+interface ArchivedMetaEntry {
+  sessionId: string
+  parentId?: string
+  cwd?: string
+  title?: string
+  updatedAt?: number
+  running?: boolean
+  blank?: boolean
+  mtimeMs?: number
+}
+interface ArchivedMetaCache {
+  version: number
+  byId: Record<string, ArchivedMetaEntry>
+}
+const ARCHIVED_META_CACHE_VERSION = 1
+let archivedMetaState: { root: string; data: ArchivedMetaCache } | null = null
+let archivedMetaDirty = false
+let archivedMetaSaveChain: Promise<void> = Promise.resolve()
+
+function archivedMetaPath(root: string): string {
+  return join(root, '..', '.dsh-branch-workspace-meta.json')
+}
+
+function getArchivedMetaCache(root: string): ArchivedMetaCache {
+  if (archivedMetaState && archivedMetaState.root === root) {
+    return archivedMetaState.data
+  }
+  const empty: ArchivedMetaCache = { version: ARCHIVED_META_CACHE_VERSION, byId: {} }
+  try {
+    const text = readFileSync(archivedMetaPath(root), 'utf8')
+    const parsed = JSON.parse(text) as Partial<ArchivedMetaCache>
+    if (
+      parsed &&
+      parsed.version === ARCHIVED_META_CACHE_VERSION &&
+      parsed.byId &&
+      typeof parsed.byId === 'object'
+    ) {
+      archivedMetaState = { root, data: parsed as ArchivedMetaCache }
+      archivedMetaDirty = false
+      return parsed as ArchivedMetaCache
+    }
+  } catch {
+    // first run or corrupt cache; start empty
+  }
+  archivedMetaState = { root, data: empty }
+  archivedMetaDirty = false
+  return empty
+}
+
+function scheduleArchivedMetaSave(root: string, data: ArchivedMetaCache): void {
+  archivedMetaDirty = true
+  archivedMetaSaveChain = archivedMetaSaveChain.then(async () => {
+    if (!archivedMetaDirty || !archivedMetaState || archivedMetaState.root !== root || archivedMetaState.data !== data) {
+      return
+    }
+    try {
+      const path = archivedMetaPath(root)
+      const tmp = `${path}.${process.pid}.tmp`
+      await writeFile(tmp, JSON.stringify(data))
+      await rename(tmp, path)
+      archivedMetaDirty = false
+    } catch {
+      // Keep dirty so the next archive request retries the write.
+    }
+  })
+}
+
+function safeMtimeMs(file: string): number | undefined {
+  try {
+    return statSync(file).mtimeMs
+  } catch {
+    return undefined
+  }
+}
+
+function headerParentId(header: any): string | undefined {
+  if (!header) return undefined
+  return header.parentSession ?? header.parentId
+}
+
+function lineageFromLocations(locations: SessionLocation[]): Array<{ sessionId: string; parentId?: string }> {
+  return locations.map((location) => ({
+    sessionId: location.sessionId,
+    parentId: headerParentId(location.header),
+  }))
+}
+
+function countDescendantsFromLocations(locations: SessionLocation[], sessionId: string): number {
+  const childrenOf = new Map<string, string[]>()
+  for (const location of locations) {
+    const parentId = headerParentId(location.header)
+    if (!parentId || parentId === location.sessionId) continue
+    const list = childrenOf.get(parentId) ?? []
+    list.push(location.sessionId)
+    childrenOf.set(parentId, list)
+  }
+  let count = 0
+  const seen = new Set<string>([sessionId])
+  const stack = childrenOf.get(sessionId) ?? []
+  while (stack.length > 0) {
+    const id = stack.pop()!
+    if (seen.has(id)) continue
+    seen.add(id)
+    count += 1
+    const next = childrenOf.get(id)
+    if (next) {
+      for (const child of next) stack.push(child)
+    }
+  }
+  return count
+}
 
 /** Cheap filesystem fingerprint: directory entries + per-file mtime, no header IO. */
 function sessionFilesSignature(files: SessionFileRef[]): string {
@@ -416,30 +537,6 @@ function getWorkspaceRegistry(ctx: AppContext, wctx: any): any {
   }
 }
 
-function countParsedDescendants(items: ParsedSession[], sessionId: string): number {
-  const childrenOf = new Map<string, string[]>()
-  for (const item of items) {
-    if (!item.parentId || item.parentId === item.sessionId) continue
-    const list = childrenOf.get(item.parentId) ?? []
-    list.push(item.sessionId)
-    childrenOf.set(item.parentId, list)
-  }
-  let count = 0
-  const seen = new Set<string>([sessionId])
-  const stack = childrenOf.get(sessionId) ?? []
-  while (stack.length > 0) {
-    const id = stack.pop()!
-    if (seen.has(id)) continue
-    seen.add(id)
-    count += 1
-    const next = childrenOf.get(id)
-    if (next) {
-      for (const child of next) stack.push(child)
-    }
-  }
-  return count
-}
-
 async function listArchivedSessions(
   ctx: AppContext,
   wctx: any,
@@ -460,39 +557,84 @@ async function listArchivedSessions(
 
   const root = homeSessionsRoot(wctx)
   const locations = await discoverSessionLocations(wctx, root, getPersistence())
-  const parsed = await parseAllSessions(locations, getPersistence(), ctx.logger)
-  const byId = new Map(parsed.map((s) => [s.sessionId, s]))
+  const byLocation = new Map(locations.map((location) => [location.sessionId, location]))
+  const lineage = lineageFromLocations(locations)
   const liveService = ctx.get?.('sessions')
+  const meta = getArchivedMetaCache(root)
+  let metaChanged = false
   const result: ArchivedSessionDTO[] = []
 
   for (const id of archivedIds) {
-    const s = byId.get(id)
-    if (!s) {
+    const location = byLocation.get(id)
+    const cached = meta.byId[id]
+    const headerParent = location ? headerParentId(location.header) : undefined
+    const parentId = headerParent ?? cached?.parentId
+    const parentKnown = !!parentId && parentId !== id && (byLocation.has(parentId) || !!liveService?.get?.(parentId))
+    const descendantCount = countDescendantsFromLocations(locations, id)
+
+    if (!location) {
       result.push({
         sessionId: id,
-        title: id,
-        parentKnown: false,
-        descendantCount: 0,
+        parentId,
+        title: cached?.title || id,
+        cwd: cached?.cwd,
+        updatedAt: cached?.updatedAt,
+        running: cached?.running,
+        blank: cached?.blank,
+        parentKnown,
+        descendantCount,
         missing: true,
       })
       continue
     }
-    const parentKnown = !!s.parentId && s.parentId !== id && (byId.has(s.parentId) || !!liveService?.get?.(s.parentId))
-    const descendantCount = countParsedDescendants(parsed, id)
+
+    const mtimeMs = safeMtimeMs(location.file)
+    let entry = cached
+    if (!entry || entry.mtimeMs !== mtimeMs) {
+      try {
+        const s = await parseSessionAt(location, getPersistence(), ctx.logger)
+        entry = {
+          sessionId: id,
+          parentId: s.parentId ?? headerParentId(location.header),
+          cwd: s.cwd,
+          title: s.title || id,
+          updatedAt: s.lastActiveAt,
+          running: s.running,
+          blank: s.blank,
+          mtimeMs,
+        }
+        meta.byId[id] = entry
+        metaChanged = true
+      } catch (error) {
+        ctx.logger?.warn?.('[branch-workspace] skip unreadable archived session:', id, String(error))
+        entry = cached ?? {
+          sessionId: id,
+          parentId: headerParentId(location.header),
+          cwd: location.header?.cwd,
+          title: id,
+          updatedAt: location.header?.createdAt,
+          mtimeMs,
+        }
+        meta.byId[id] = entry
+      }
+    }
 
     result.push({
       sessionId: id,
-      parentId: s.parentId,
-      title: s.title || id,
-      cwd: s.cwd,
-      updatedAt: s.lastActiveAt,
-      running: s.running,
-      blank: s.blank,
+      parentId: entry.parentId ?? headerParentId(location.header),
+      title: entry.title || id,
+      cwd: entry.cwd,
+      updatedAt: entry.updatedAt,
+      running: entry.running,
+      blank: entry.blank,
       parentKnown,
       descendantCount,
     })
   }
 
+  if (metaChanged) {
+    scheduleArchivedMetaSave(root, meta)
+  }
   archivesCache = { at: Date.now(), archivedKey, sessions: result }
   return result
 }
@@ -509,12 +651,15 @@ async function purgeSession(
   if (!archivedIds.includes(sessionId)) throw new Error('只能永久删除已归档的根会话')
   const root = homeSessionsRoot(wctx)
   const locations = await discoverSessionLocations(wctx, root, getPersistence())
-  const parsed = await parseAllSessions(locations, getPersistence(), ctx.logger)
-  const byId = new Map(parsed.map((s) => [s.sessionId, s]))
+  // Purge only needs the durable fork graph from SessionHeader, not full logs.
+  // This removes the previous all-session decompress/parse bottleneck.
+  const lineage = lineageFromLocations(locations)
+  const byId = new Map(lineage.map((item) => [item.sessionId, item.parentId]))
   // Allow metadata-only purge for archived ids whose log directory is already
   // missing/corrupt; `collectFamilyIds` still returns the id itself and the
   // later removal from archivedSessionIds cleans the durable state.
-  const target = byId.get(sessionId) ?? { sessionId, parentId: undefined, title: sessionId } as any
+  const targetParent = byId.get(sessionId)
+  const target = { sessionId, parentId: targetParent }
 
   // Permanent delete is intentionally root-only: it removes the whole fork
   // tree. Refuse requests that name a child to avoid deleting an unarchived
@@ -524,7 +669,7 @@ async function purgeSession(
     throw new Error('只能删除根会话（该会话存在父会话）')
   }
 
-  const family = collectFamilyIds(parsed, sessionId)
+  const family = collectFamilyIds(lineage, sessionId)
   for (const id of family) {
     if (liveService?.get?.(id)) {
       throw new Error(`会话正在运行或已加载，无法永久删除: ${id}`)
@@ -640,6 +785,21 @@ async function purgeSession(
         )
       }
     }
+
+    // Drop deleted sessions from the persistent display cache so a future
+    // purge/list never resurrects stale archived metadata.
+    const meta = getArchivedMetaCache(root)
+    let metaChanged = false
+    for (const id of family) {
+      if (meta.byId[id]) {
+        delete meta.byId[id]
+        metaChanged = true
+      }
+    }
+    if (metaChanged) {
+      scheduleArchivedMetaSave(root, meta)
+    }
+
     invalidateCaches()
     return { purged: family.size }
   } catch (error) {
