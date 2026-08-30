@@ -212,19 +212,33 @@
 		function deriveGroups(list, workspaces, archivedSessionIds, view) {
 			const archived = new Set(archivedSessionIds);
 			const expandedGroups = new Set(view.expandedGroups);
-			const descendants = (0, _deepseek_ai_dsh_client_runtime_client.indexSubagentDescendants)(list.byId);
-			const currentGroup = list.current === void 0 ? void 0 : workspaces.find((w) => w.sessionIds.includes(list.current))?.workspaceId ?? "";
+			const descendants = (0,
+			_deepseek_ai_dsh_client_runtime_client.indexSubagentDescendants)(
+				list.byId
+			);
+			const currentGroup =
+				list.current === void 0
+					? void 0
+					: workspaces.find((w) => w.sessionIds.includes(list.current))
+							?.workspaceId ?? "";
 			const filter = view.filter || "all";
 			const groupingArchived = filter === "archived" ? new Set() : archived;
 			const groups = [];
-			for (const g of groupByWorkspace(list, workspaces, groupingArchived, view.ungroupedOrder)) {
+			for (const g of groupByWorkspace(
+				list,
+				workspaces,
+				groupingArchived,
+				view.ungroupedOrder
+			)) {
 				if (filter === "currentWorkspace" && g.key !== currentGroup) continue;
-				let members = g.sessions;
+				const allMembers = g.sessions;
+				let matching = allMembers;
 				if (filter === "running") {
-					members = members.filter((s) => s.running);
+					matching = allMembers.filter((s) => s.running);
 				} else if (filter === "archived") {
-					members = members.filter((s) => archived.has(s.id));
+					matching = allMembers.filter((s) => archived.has(s.id));
 				}
+				const matchingIds = new Set(matching.map((s) => s.id));
 				const expanded = expandedGroups.has(g.key);
 				groups.push({
 					key: g.key,
@@ -232,24 +246,18 @@
 					cwd: g.cwd,
 					createdAt: g.createdAt,
 					label: g.label,
-					sessionCount: members.length,
+					sessionCount: matching.length,
+					matchingIds,
 					expanded,
 					containsCurrent: g.key === currentGroup,
-					sessions: expanded ? members.map((session) => sessionNode(session, descendants)) : []
+					sessions: expanded
+						? allMembers.map((session) => sessionNode(session, descendants))
+						: [],
 				});
 			}
 			return groups;
 		}
-		/**
-		* Derive the flat session list ("In one list" mode): every session — fork
-		* children included — as a top-level row, strictly newest-first. No grouping,
-		* no parent/child adjacency. Content search lives outside this derivation
-		* (see {@link deriveSearchResults}).
-		* @param list - sessions list snapshot.
-		* @param archivedSessionIds - registry-global archive set.
-		* @returns flat rows in render order.
-		*/
-		function deriveFlat(list, archivedSessionIds, orderBy = "updated", filter = "all") {
+function deriveFlat(list, archivedSessionIds, orderBy = "updated", filter = "all") {
 			const archived = new Set(archivedSessionIds);
 			const descendants = (0, _deepseek_ai_dsh_client_runtime_client.indexSubagentDescendants)(list.byId);
 			const rows = [];
@@ -323,12 +331,20 @@
 				items: ordered.slice(0, limit).map((summary) => {
 					const match = contentBySession.get(summary.id);
 					const path = [];
+					const pathIds = [];
 					const seen = new Set();
 					let cursor = summary;
-					while (cursor.parentId !== void 0 && cursor.parentId !== cursor.id && list.byId[cursor.parentId] !== void 0 && !seen.has(cursor.parentId)) {
+					while (
+						cursor.parentId !== void 0 &&
+						cursor.parentId !== cursor.id &&
+						list.byId[cursor.parentId] !== void 0 &&
+						!seen.has(cursor.parentId)
+					) {
 						seen.add(cursor.id);
-						path.unshift(sessionTitle(list.byId[cursor.parentId]));
-						cursor = list.byId[cursor.parentId];
+						const parent = list.byId[cursor.parentId];
+						path.unshift(sessionTitle(parent));
+						pathIds.unshift(parent.id);
+						cursor = parent;
 						if (seen.has(cursor.id)) break;
 					}
 					return {
@@ -336,11 +352,15 @@
 						title: sessionTitle(summary),
 						workspace: labelOf(summary),
 						path,
+						pathIds,
 						running: summary.running,
-						runningSubagentCount: descendants.get(summary.id)?.runningCount ?? 0,
-						...summary.pendingInteraction === void 0 ? {} : { pendingInteraction: summary.pendingInteraction },
+						runningSubagentCount:
+							descendants.get(summary.id)?.runningCount ?? 0,
+						...(summary.pendingInteraction === void 0
+							? {}
+							: { pendingInteraction: summary.pendingInteraction }),
 						completed: summary.completed === true,
-						...match === void 0 ? {} : { snippet: match.snippet }
+						...(match === void 0 ? {} : { snippet: match.snippet }),
 					};
 				}),
 				hasMore: content.hasMore || ordered.length > limit
@@ -430,6 +450,16 @@
 			"renameInput": "YDXeBa_renameInput",
 			"dropBefore": "YDXeBa_dropBefore"
 		};
+
+		const branchPhaseCss = ".dsh-bwf-root{font-weight:600}.dsh-bwf-root .YDXeBa_title{font-weight:600}.dsh-bwf-child{font-weight:400}.dsh-bwf-child .YDXeBa_title{font-weight:400;color:var(--dsw-alias-label-secondary)}.dsh-bwf-row-muted{opacity:.62}.dsh-bwf-branch-badge{min-width:24px!important;min-height:22px!important;padding:0 6px!important;font-variant-numeric:tabular-nums}.dsh-bwf-breadcrumb{display:inline-flex;align-items:center;max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;vertical-align:middle;color:var(--dsw-alias-label-tertiary);background:0 0;border:none;border-radius:4px;padding:1px 2px;font-size:12px;line-height:17px;cursor:pointer}.dsh-bwf-breadcrumb:hover{color:var(--dsw-alias-label-primary);background:var(--dsw-alias-interactive-bg-hover)}.dsh-bwf-toast{position:fixed;bottom:16px;right:16px;z-index:9999;max-width:320px;padding:8px 12px;border-radius:8px;background:var(--dsw-alias-button-elevated-fill, #222);color:var(--dsw-alias-label-primary);box-shadow:0 4px 16px rgba(0,0,0,.2);font-size:13px;line-height:18px;pointer-events:auto}";
+		if (typeof document !== "undefined" && document.querySelector("style[data-plugin-css=\"@deepseek-ai/dsh-client-ui-workspace/branch-folders.css\"]") === null) {
+			const tag = document.createElement("style");
+			tag.dataset.plugin = "@deepseek-ai/dsh-client-ui-workspace";
+			tag.dataset.pluginCss = "@deepseek-ai/dsh-client-ui-workspace/branch-folders.css";
+			tag.textContent = branchPhaseCss;
+			document.head.appendChild(tag);
+		}
+
 		//#endregion
 		//#region lib/types/client/rows/Rows.js
 		/**
@@ -710,41 +740,106 @@
 			const selected = result.id === currentId;
 			const statuses = sessionStatuses(result, t);
 			const primaryStatus = statuses[0];
-			return (0, react_jsx_runtime.jsxs)("button", {
-				type: "button",
-				className: clsx(Rows_module_css_default.searchResultRow, selected && Rows_module_css_default.selected),
+			const openPath = (id) => {
+				if (id !== void 0) onOpen(id);
+			};
+			return (0, react_jsx_runtime.jsxs)("div", {
+				className: clsx(
+					Rows_module_css_default.searchResultRow,
+					selected && Rows_module_css_default.selected
+				),
 				role: "treeitem",
 				"aria-level": 1,
 				"aria-selected": selected,
+				tabIndex: 0,
 				onClick: () => {
 					onOpen(result.id);
 				},
-				children: [(0, react_jsx_runtime.jsxs)("span", {
-					className: Rows_module_css_default.searchResultHeading,
-					children: [(0, react_jsx_runtime.jsx)("span", {
-						className: Rows_module_css_default.slot,
-						children: (primaryStatus.state !== "done" || result.completed) && (0, react_jsx_runtime.jsx)(SessionStatusDots, { statuses })
-					}), (0, react_jsx_runtime.jsx)("span", {
-						className: Rows_module_css_default.searchResultTitle,
-						children: result.title
-					})]
-				}), (0, react_jsx_runtime.jsxs)("span", {
-					className: Rows_module_css_default.searchResultMeta,
-					children: [(0, react_jsx_runtime.jsx)("span", {
-						className: Rows_module_css_default.searchResultWorkspace,
-						children: result.workspace
-					}), result.path !== void 0 && result.path.length > 0 && (0, react_jsx_runtime.jsx)("span", {
-						className: Rows_module_css_default.searchResultSnippet,
-						style: { color: "var(--dsw-alias-label-tertiary)" },
-						children: result.path.join(" / ")
-					}), result.snippet !== void 0 && (0, react_jsx_runtime.jsx)("span", {
-						className: Rows_module_css_default.searchResultSnippet,
-						children: result.snippet
-					})]
-				})]
+				onKeyDown: (e) => {
+					if (e.key === "Enter" || e.key === " ") {
+						e.preventDefault();
+						onOpen(result.id);
+					}
+				},
+				children: [
+					(0, react_jsx_runtime.jsxs)("span", {
+						className: Rows_module_css_default.searchResultHeading,
+						children: [
+							(0, react_jsx_runtime.jsx)("span", {
+								className: Rows_module_css_default.slot,
+								children:
+									(primaryStatus.state !== "done" || result.completed) &&
+									(0, react_jsx_runtime.jsx)(SessionStatusDots, { statuses }),
+							}),
+							(0, react_jsx_runtime.jsx)("span", {
+								className: Rows_module_css_default.searchResultTitle,
+								children: result.title,
+							}),
+						],
+					}),
+					(0, react_jsx_runtime.jsxs)("span", {
+						className: Rows_module_css_default.searchResultMeta,
+						children: [
+							(0, react_jsx_runtime.jsx)("span", {
+								className: Rows_module_css_default.searchResultWorkspace,
+								children: result.workspace,
+							}),
+							result.path !== void 0 &&
+								result.path.length > 0 &&
+								(0, react_jsx_runtime.jsxs)("span", {
+									className: Rows_module_css_default.searchResultSnippet,
+									style: {
+										color: "var(--dsw-alias-label-tertiary)",
+										display: "inline-flex",
+										alignItems: "center",
+										gap: 2,
+										minWidth: 0,
+										overflow: "hidden",
+									},
+									children: result.path.map((title, index) =>
+										(0, react_jsx_runtime.jsxs)(
+											"span",
+											{
+												style: {
+													display: "inline-flex",
+													alignItems: "center",
+													minWidth: 0,
+												},
+												children: [
+													index > 0 &&
+														(0, react_jsx_runtime.jsx)("span", {
+															style: {
+																color: "var(--dsw-alias-label-tertiary)",
+																flex: "none",
+															},
+															children: "/",
+														}),
+													(0, react_jsx_runtime.jsx)("button", {
+														type: "button",
+														className: "dsh-bwf-breadcrumb",
+														onClick: (e) => {
+															e.stopPropagation();
+															openPath(result.pathIds && result.pathIds[index]);
+														},
+														children: title,
+													}),
+												],
+											},
+											`crumb-${index}`
+										)
+									),
+								}),
+							result.snippet !== void 0 &&
+								(0, react_jsx_runtime.jsx)("span", {
+									className: Rows_module_css_default.searchResultSnippet,
+									children: result.snippet,
+								}),
+						],
+					}),
+				],
 			});
 		}
-		/**
+/**
 		* One top-level 34px session row: status dot (pending user interaction outranks
 		* own or descendant activity), title, relative time, and the row actions menu.
 		* @param props.node - derived session node.
@@ -759,7 +854,7 @@
 		* @param props.t - the browser root's locale seat.
 		* @returns the session row.
 		*/
-		function SessionNodeItem({ node, currentId, now, onOpen, onRename, onFork, onArchive, drag, flat = false, t, depth = 0, collapsed = false, onToggleCollapse, path = [], siblings = [], onJumpSibling, onContextMenu, selectionMode = false, selected = false, onToggleSelect }) {
+		function SessionNodeItem({ node, currentId, now, onOpen, onRename, onFork, onArchive, drag, flat = false, t, depth = 0, collapsed = false, onToggleCollapse, path = [], siblings = [], onJumpSibling, onContextMenu, selectionMode = false, selected = false, onToggleSelect, muted = false }) {
 const row = node;
 const title = displayTitle(node, t);
 const rowSelected = node.id === currentId;
@@ -768,11 +863,19 @@ const showStatus = statuses[0].state !== "done" || row.completed;
 const [menuOpen, setMenuOpen] = (0, react.useState)(false);
 const [branchMenuOpen, setBranchMenuOpen] = (0, react.useState)(false);
 const branchChildren = node.children || [];
-const branchMenuItems = branchChildren.map((child) => ({
+const totalDescendants = countDescendants(node);
+const branchMenuItems = [
+{
+type: "label",
+id: "branch-header",
+text: `${branchChildren.length} ${uiLabel("个直接分支 / 共", "direct /")} ${totalDescendants} ${uiLabel("个分支", "branches")}`
+},
+...branchChildren.map((child) => ({
 id: child.id,
 label: displayTitle(child, t),
 icon: child.running ? (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.StateDot, { state: "ongoing" }) : (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.StateDot, { state: "done" })
-}));
+}))
+];
 const sessionMenuItems = [
 {
 id: "rename",
@@ -801,7 +904,7 @@ setMenuOpen(true);
 };
 return (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.HoverCard, {
 anchor: (0, react_jsx_runtime.jsxs)("div", {
-className: clsx(Rows_module_css_default.sessionRow, rowSelected && Rows_module_css_default.selected, menuOpen && Rows_module_css_default.menuOpen, flat && !showStatus && Rows_module_css_default.flatSessionRowWithoutStatus, drag?.marker === "before" && Rows_module_css_default.dropBefore, drag?.marker === "after" && Rows_module_css_default.dropAfter),
+className: clsx(Rows_module_css_default.sessionRow, depth === 0 && "dsh-bwf-root", depth > 0 && "dsh-bwf-child", muted && "dsh-bwf-row-muted", rowSelected && Rows_module_css_default.selected, menuOpen && Rows_module_css_default.menuOpen, flat && !showStatus && Rows_module_css_default.flatSessionRowWithoutStatus, drag?.marker === "before" && Rows_module_css_default.dropBefore, drag?.marker === "after" && Rows_module_css_default.dropAfter),
 ...(depth > 0 ? { style: { paddingLeft: `calc(var(--dsh-sidebar-inline-padding, 8px) + ${depth * 16}px)` } } : {}),
 role: "treeitem",
 "aria-level": depth + 1,
@@ -903,8 +1006,9 @@ portal: true,
 closeOnPointerLeave: true,
 anchor: (0, react_jsx_runtime.jsx)("button", {
 type: "button",
-className: Rows_module_css_default.iconButton,
-"aria-label": `${countDescendants(node)} ${uiLabel("个子分支", "branches")}`,
+className: clsx(Rows_module_css_default.iconButton, "dsh-bwf-branch-badge"),
+"aria-label": `${branchChildren.length} ${uiLabel("个直接分支 / 共", "direct branches /")} ${totalDescendants} ${uiLabel("个分支", "branches total")}`,
+title: `${branchChildren.length} ${uiLabel("个直接分支 / 共", "direct branches /")} ${totalDescendants} ${uiLabel("个分支", "branches total")}`,
 onClick: (e) => {
 e.stopPropagation();
 setBranchMenuOpen((v) => !v);
@@ -912,18 +1016,21 @@ setBranchMenuOpen((v) => !v);
 style: {
 display: "inline-flex",
 alignItems: "center",
+justifyContent: "center",
 gap: "2px",
 flex: "none",
+minWidth: 24,
+minHeight: 22,
 color: "var(--dsw-alias-label-tertiary)",
 fontSize: "12px",
 lineHeight: "17px",
-padding: "0 4px",
+padding: "0 6px",
 border: "none",
 background: "none",
 cursor: "pointer",
 borderRadius: 6
 },
-children: [(0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.IconBranchOutline16, { size: 11 }), (0, react_jsx_runtime.jsx)("span", { children: countDescendants(node) })]
+children: [(0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.IconBranchOutline16, { size: 11 }), (0, react_jsx_runtime.jsx)("span", { children: totalDescendants })]
 })
 }),
 !row.blank && (0, react_jsx_runtime.jsx)("span", {
@@ -1657,54 +1764,111 @@ return a.id < b.id ? -1 : 1;
 			walk(roots);
 			return ids;
 		}
+		/** Count descendant fork sessions from the flat list/graph (used for archive-root confirmations). Cycle-safe. */
+		function countSessionDescendantsFromList(list, sessionId) {
+			const byParent = new Map();
+			for (const id of list.ids) {
+				const session = list.byId[id];
+				if (session === void 0 || session.parentId === void 0 || session.parentId === id) continue;
+				const children = byParent.get(session.parentId) || [];
+				children.push(session.id);
+				byParent.set(session.parentId, children);
+			}
+			let count = 0;
+			const seen = new Set([sessionId]);
+			const stack = byParent.get(sessionId) || [];
+			while (stack.length > 0) {
+				const id = stack.pop();
+				if (seen.has(id)) continue;
+				seen.add(id);
+				count += 1;
+				const next = byParent.get(id);
+				if (next !== void 0) {
+					for (const child of next) stack.push(child);
+				}
+			}
+			return count;
+		}
 		/** The scrolling session tree; unmounting drops the sessions subscription and expand-all state. */
 		function SessionTree({ useSessions, startSession, open, forkSession, workspaces, archivedSessionIds, onRenameRequest, onDeleteRequest, onSessionRename, onSessionArchive, insertWorkspaceBefore, insertSessionBefore, orderBy, groupExpansion, setGroupExpanded, sessionOrderByAccount, sessionUpdatedAtByAccount, syncSessionOrderAccount, setSessionOrder, collapsedBranchesByAccount, setBranchCollapsed, setAllBranchesCollapsed, globalBranchToggle, filter = "all", selectionMode = false, selectedIds, onToggleSelect, t }) {
 			const list = useSessions((s) => s);
 			const current = list.current;
 			const [expandedSessionGroups, setExpandedSessionGroups] = (0, react.useState)([]);
-			const [collapsedByAccount, setCollapsedByAccount] = (0, react.useState)(() => {
-				try {
-					return JSON.parse(localStorage.getItem("dsh.branch-workspace.collapsed") || "{}") || {};
-				} catch {
-					return {};
-				}
-			});
+			const migratedCollapsedRef = (0, react.useRef)(false);
 			(0, react.useEffect)(() => {
+				if (migratedCollapsedRef.current) return;
+				migratedCollapsedRef.current = true;
 				try {
-					localStorage.setItem("dsh.branch-workspace.collapsed", JSON.stringify(collapsedByAccount));
+					const raw = localStorage.getItem("dsh.branch-workspace.collapsed");
+					if (!raw) return;
+					const parsed = JSON.parse(raw);
+					if (parsed !== null && typeof parsed === "object") {
+						for (const [accountKey, ids] of Object.entries(parsed)) {
+							if (!Array.isArray(ids)) continue;
+							const valid = ids.filter((id) => typeof id === "string");
+							if (valid.length === 0) continue;
+							if (typeof setAllBranchesCollapsed === "function") {
+								setAllBranchesCollapsed(accountKey, valid, true);
+							} else if (typeof setBranchCollapsed === "function") {
+								for (const id of valid)
+									setBranchCollapsed(accountKey, id, true);
+							}
+						}
+					}
+					localStorage.removeItem("dsh.branch-workspace.collapsed");
 				} catch {
 					// Ignore storage quota / privacy-mode failures.
 				}
-			}, [collapsedByAccount]);
-			const collapsedFor = (0, react.useCallback)((accountKey) => {
-				const base = new Set((collapsedBranchesByAccount || {})[accountKey] || []);
-				const local = collapsedByAccount[accountKey] || [];
-				for (const id of local) {
-					if (base.has(id)) base.delete(id);
-					else base.add(id);
-				}
-				return base;
-			}, [collapsedByAccount, collapsedBranchesByAccount]);
+			}, [setAllBranchesCollapsed, setBranchCollapsed]);
+			const [temporaryExpandedByAccount, setTemporaryExpandedByAccount] = (0,
+			react.useState)({});
+			const collapsedFor = (0, react.useCallback)(
+				(accountKey) => {
+					const collapsed = new Set(
+						(collapsedBranchesByAccount || {})[accountKey] || []
+					);
+					const temporary = temporaryExpandedByAccount[accountKey];
+					if (temporary !== void 0) {
+						for (const id of temporary) collapsed.delete(id);
+					}
+					return collapsed;
+				},
+				[collapsedBranchesByAccount, temporaryExpandedByAccount]
+			);
 			const autoExpandedCurrent = (0, react.useRef)(null);
 			const [drag, setDrag] = (0, react.useState)(null);
 			const sessionDropCommitted = (0, react.useRef)(false);
 			const [workspaceDrag, setWorkspaceDrag] = (0, react.useState)(null);
 			const workspaceDropCommitted = (0, react.useRef)(false);
 			useNativeDragAcceptance(drag !== null || workspaceDrag !== null);
-			const currentGroup = current === void 0 ? void 0 : workspaces.find((w) => w.sessionIds.includes(current))?.workspaceId ?? "";
+			const currentGroup =
+				current === void 0
+					? void 0
+					: workspaces.find((w) => w.sessionIds.includes(current))
+							?.workspaceId ?? "";
 			(0, react.useEffect)(() => {
-				if (current === void 0 || currentGroup === void 0 || Object.hasOwn(groupExpansion, currentGroup)) return;
+				if (
+					current === void 0 ||
+					currentGroup === void 0 ||
+					Object.hasOwn(groupExpansion, currentGroup)
+				)
+					return;
 				setGroupExpanded(currentGroup, true);
-			}, [
-				current,
-				currentGroup,
-				setGroupExpanded,
-				groupExpansion
-			]);
-			const expandedGroups = (0, react.useMemo)(() => Object.entries(groupExpansion).filter(([, expanded]) => expanded).map(([key]) => key), [groupExpansion]);
+			}, [current, currentGroup, setGroupExpanded, groupExpansion]);
+			const expandedGroups = (0, react.useMemo)(
+				() =>
+					Object.entries(groupExpansion)
+						.filter(([, expanded]) => expanded)
+						.map(([key]) => key),
+				[groupExpansion]
+			);
 			const ungroupedSessionIds = (0, react.useMemo)(() => {
-				const accounted = new Set(workspaces.flatMap((workspace) => workspace.sessionIds));
-				return list.ids.filter((id) => list.byId[id] !== void 0 && !accounted.has(id));
+				const accounted = new Set(
+					workspaces.flatMap((workspace) => workspace.sessionIds)
+				);
+				return list.ids.filter(
+					(id) => list.byId[id] !== void 0 && !accounted.has(id)
+				);
 			}, [list, workspaces]);
 			const sortSessionIds = (sessionIds, accountKey) => {
 				const ids = sessionIds.filter((id) => list.byId[id] !== void 0);
@@ -1726,140 +1890,170 @@ return a.id < b.id ? -1 : 1;
 					});
 				}
 				if (orderBy === "updated") {
-					return [...ids].sort((a, b) => compareSessionRecency(a, b, list.byId));
+					return [...ids].sort((a, b) =>
+						compareSessionRecency(a, b, list.byId)
+					);
 				}
 				return reconciledSessionOrder(ids, sessionOrderByAccount[accountKey]);
 			};
 			const orderedWorkspaces = (0, react.useMemo)(() => {
 				return workspaces.map((workspace) => ({
 					...workspace,
-					sessionIds: sortSessionIds(workspace.sessionIds, workspace.workspaceId)
+					sessionIds: sortSessionIds(
+						workspace.sessionIds,
+						workspace.workspaceId
+					),
 				}));
 			}, [sessionOrderByAccount, workspaces, orderBy, list]);
-			const orderedUngroupedSessionIds = (0, react.useMemo)(() => sortSessionIds(ungroupedSessionIds, ""), [sessionOrderByAccount, ungroupedSessionIds, orderBy, list]);
-			const groups = (0, react.useMemo)(() => deriveGroups(list, orderedWorkspaces, archivedSessionIds, {
-				expandedGroups,
-				filter,
-				...sessionOrderByAccount[""] === void 0 ? {} : { ungroupedOrder: sessionOrderByAccount[""] }
-			}), [
-				list,
-				orderedWorkspaces,
-				archivedSessionIds,
-				expandedGroups,
-				filter,
-				sessionOrderByAccount
-			]);
+			const orderedUngroupedSessionIds = (0, react.useMemo)(
+				() => sortSessionIds(ungroupedSessionIds, ""),
+				[sessionOrderByAccount, ungroupedSessionIds, orderBy, list]
+			);
+			const groups = (0, react.useMemo)(
+				() =>
+					deriveGroups(list, orderedWorkspaces, archivedSessionIds, {
+						expandedGroups,
+						filter,
+						...(sessionOrderByAccount[""] === void 0
+							? {}
+							: { ungroupedOrder: sessionOrderByAccount[""] }),
+					}),
+				[
+					list,
+					orderedWorkspaces,
+					archivedSessionIds,
+					expandedGroups,
+					filter,
+					sessionOrderByAccount,
+				]
+			);
+			const filterActive = filter !== "all" && filter !== "currentWorkspace";
 			const sessionTreeByGroup = (0, react.useMemo)(() => {
 				const map = new Map();
 				for (const group of groups) {
 					const sessionTree = buildSessionTree(group.sessions);
 					const collapsed = collapsedFor(group.key);
-					const sessionRows = flattenSessionTree(sessionTree, 0, [], /* @__PURE__ */ new Set(), collapsed);
+					const sessionRows = flattenSessionTree(
+						sessionTree,
+						0,
+						[],
+						/* @__PURE__ */ new Set(),
+						filterActive ? void 0 : collapsed
+					);
 					const pathByNode = buildPathMap(sessionTree);
 					const siblingsByNode = buildSiblingsMap(sessionTree);
-					map.set(group.key, { sessionTree, sessionRows, pathByNode, siblingsByNode });
+					map.set(group.key, {
+						sessionTree,
+						sessionRows,
+						pathByNode,
+						siblingsByNode,
+					});
 				}
 				return map;
-			}, [groups, collapsedFor]);
-			(0, react.useEffect)(() => {
-				if (!globalBranchToggle || globalBranchToggle.version === 0) return;
-				const collapsed = globalBranchToggle.collapsed;
-				setCollapsedByAccount((prev) => {
-					const next = { ...prev };
-					for (const group of groups) {
-						const branchIds = collectBranchIds(group.sessions);
-						const list = Array.isArray(next[group.key]) ? next[group.key].slice() : [];
-						for (const id of branchIds) {
-							const idx = list.indexOf(id);
-							if (collapsed) {
-								if (idx === -1) list.push(id);
-							} else if (idx !== -1) {
-								list.splice(idx, 1);
-							}
-						}
-						next[group.key] = list;
-					}
-					return next;
-				});
-			}, [globalBranchToggle && globalBranchToggle.version, groups]);
+			}, [groups, collapsedFor, filterActive]);
 			(0, react.useEffect)(() => {
 				if (current === void 0) return;
-				const group = groups.find((candidate) => candidate.sessions.some((session) => session.id === current));
+				const group = groups.find((candidate) =>
+					candidate.sessions.some((session) => session.id === current)
+				);
 				if (group === void 0 || !group.expanded) return;
 				const tree = sessionTreeByGroup.get(group.key);
 				if (tree === void 0) return;
 				const rows = tree.sessionRows;
 				const currentIndex = rows.findIndex((row) => row.node.id === current);
-				if (currentIndex >= COLLAPSED_SESSION_LIMIT && !expandedSessionGroups.includes(group.key)) {
+				if (
+					currentIndex >= COLLAPSED_SESSION_LIMIT &&
+					!expandedSessionGroups.includes(group.key)
+				) {
 					setExpandedSessionGroups((keys) => [...keys, group.key]);
 				}
-			}, [
-				current,
-				groups,
-				sessionTreeByGroup
-			]);
+			}, [current, groups, sessionTreeByGroup]);
 			(0, react.useEffect)(() => {
-				if (current === void 0 || autoExpandedCurrent.current === current) return;
+				if (current === void 0 || autoExpandedCurrent.current === current)
+					return;
 				let found = false;
 				for (const [accountKey, tree] of sessionTreeByGroup) {
 					const ancestors = findSessionAncestors(tree.sessionTree, current);
 					if (ancestors === null) continue;
 					found = true;
 					const collapsed = collapsedFor(accountKey);
-					for (const ancestorId of ancestors) {
-						if (collapsed.has(ancestorId)) {
-							if (typeof setBranchCollapsed === "function") {
-								setBranchCollapsed(accountKey, ancestorId, false);
-							}
-							setCollapsedByAccount((prev) => {
-								const list = (prev[accountKey] || []).filter((x) => x !== ancestorId);
-								return { ...prev, [accountKey]: list };
-							});
-						}
+					const toExpand = ancestors.filter((ancestorId) =>
+						collapsed.has(ancestorId)
+					);
+					if (toExpand.length > 0) {
+						setTemporaryExpandedByAccount((prev) => {
+							const next = { ...prev };
+							const set = new Set(next[accountKey] || []);
+							for (const ancestorId of toExpand) set.add(ancestorId);
+							next[accountKey] = Array.from(set);
+							return next;
+						});
 					}
 				}
 				if (found) autoExpandedCurrent.current = current;
-			}, [
-				current,
-				sessionTreeByGroup,
-				collapsedFor,
-				setBranchCollapsed
-			]);
+			}, [current, sessionTreeByGroup, collapsedFor]);
 			const toggleCollapsedSession = (accountKey, id) => {
 				const collapsed = collapsedFor(accountKey);
 				const next = !collapsed.has(id);
+				setTemporaryExpandedByAccount((prev) => {
+					const nextState = { ...prev };
+					const set = new Set(nextState[accountKey] || []);
+					if (next) set.delete(id);
+					else set.add(id);
+					nextState[accountKey] = Array.from(set);
+					return nextState;
+				});
 				if (typeof setBranchCollapsed === "function") {
 					setBranchCollapsed(accountKey, id, next);
-					return;
 				}
-				setCollapsedByAccount((prev) => {
-					const list = prev[accountKey] ? prev[accountKey].slice() : [];
-					const index = list.indexOf(id);
-					if (next) {
-						if (index === -1) list.push(id);
-					} else if (index !== -1) {
-						list.splice(index, 1);
-					}
-					return { ...prev, [accountKey]: list };
-				});
 			};
-			const visibleRows = (0, react.useMemo)(() => {
-				const rows = [];
+			const visibleRowsByGroup = (0, react.useMemo)(() => {
+				const map = new Map();
 				for (const [accountKey, tree] of sessionTreeByGroup) {
-					const treeRows = expandedSessionGroups.includes(accountKey) ? tree.sessionRows : tree.sessionRows.slice(0, COLLAPSED_SESSION_LIMIT);
-					for (const row of treeRows) {
-						rows.push({
+					const group = groups.find(
+						(candidate) => candidate.key === accountKey
+					);
+					if (group === void 0) continue;
+					let treeRows = tree.sessionRows;
+					if (filterActive) {
+						const nodeById = new Map(
+							treeRows.map((row) => [row.node.id, row.node])
+						);
+						const include = new Set();
+						for (const row of treeRows) {
+							if (!group.matchingIds.has(row.node.id)) continue;
+							let current = row.node;
+							include.add(current.id);
+							while (
+								current.parentId !== void 0 &&
+								current.parentId !== current.id &&
+								nodeById.has(current.parentId)
+							) {
+								current = nodeById.get(current.parentId);
+								include.add(current.id);
+								if (current.id === current.parentId) break;
+							}
+						}
+						treeRows = treeRows.filter((row) => include.has(row.node.id));
+					} else if (!expandedSessionGroups.includes(accountKey)) {
+						treeRows = treeRows.slice(0, COLLAPSED_SESSION_LIMIT);
+					}
+					map.set(
+						accountKey,
+						treeRows.map((row) => ({
 							accountKey,
 							node: row.node,
 							depth: row.depth,
 							path: tree.pathByNode.get(row.node.id) || [],
-							siblings: tree.siblingsByNode.get(row.node.id) || []
-						});
-					}
+							siblings: tree.siblingsByNode.get(row.node.id) || [],
+							muted: filterActive && !group.matchingIds.has(row.node.id),
+						}))
+					);
 				}
-				return rows;
-			}, [sessionTreeByGroup, expandedSessionGroups]);
-			const jumpSibling = (dir, id) => {
+				return map;
+			}, [sessionTreeByGroup, groups, expandedSessionGroups, filterActive]);
+			const visibleRows = (0, react.useMemo)(() => Array.from(visibleRowsByGroup.values()).flat(), [visibleRowsByGroup]);
+const jumpSibling = (dir, id) => {
 				const row = visibleRows.find((candidate) => candidate.node.id === id);
 				if (!row || row.siblings.length < 2) return;
 				const index = row.siblings.findIndex((sibling) => sibling.id === id);
@@ -1959,7 +2153,7 @@ return a.id < b.id ? -1 : 1;
 								});
 							};
 							const tree = sessionTreeByGroup.get(group.key);
-							const sessionRows = tree === void 0 ? [] : (expandedSessionGroups.includes(group.key) ? tree.sessionRows : tree.sessionRows.slice(0, COLLAPSED_SESSION_LIMIT));
+							const sessionRows = visibleRowsByGroup.get(group.key) || [];
 							return (0, react_jsx_runtime.jsxs)("div", {
 								className: clsx(WorkspaceBrowser_module_css_default.groupSection, workspaceMarker === "before" && WorkspaceBrowser_module_css_default.workspaceDropBefore, workspaceMarker === "after" && WorkspaceBrowser_module_css_default.workspaceDropAfter),
 								onDragOver: workspaceDrag === null || hoverWorkspace === void 0 ? void 0 : (e) => {
@@ -1997,11 +2191,12 @@ return a.id < b.id ? -1 : 1;
 											}
 										}
 									}),
-									sessionRows.map(({ node, depth }) => {
+									sessionRows.map(({ node, depth, muted }) => {
 										const sameGroupDrag = drag !== null && drag.accountKey === group.key;
 										return (0, react_jsx_runtime.jsx)(SessionNodeItem, {
 											node,
 											depth,
+										muted,
 											collapsed: collapsedFor(group.key).has(node.id),
 											onToggleCollapse: node.children !== void 0 && node.children.length > 0 ? (id) => toggleCollapsedSession(group.key, id) : void 0,
 											currentId: current,
@@ -2054,14 +2249,14 @@ return a.id < b.id ? -1 : 1;
 											t
 										}, node.id);
 									}),
-									group.sessions.length > COLLAPSED_SESSION_LIMIT && (0, react_jsx_runtime.jsx)("button", {
+									!filterActive && group.sessionCount > COLLAPSED_SESSION_LIMIT && (0, react_jsx_runtime.jsx)("button", {
 										type: "button",
 										className: WorkspaceBrowser_module_css_default.sessionOverflowButton,
 										"aria-expanded": expandedSessionGroups.includes(group.key),
 										onClick: () => {
 											setExpandedSessionGroups((keys) => toggled(keys, group.key));
 										},
-										children: expandedSessionGroups.includes(group.key) ? t("sessions.collapse") : t("sessions.expand", { n: group.sessions.length - COLLAPSED_SESSION_LIMIT })
+										children: expandedSessionGroups.includes(group.key) ? t("sessions.collapse") : t("sessions.expand", { n: group.sessionCount - COLLAPSED_SESSION_LIMIT })
 									})
 								]
 							}, group.key);
@@ -2484,11 +2679,67 @@ return a.id < b.id ? -1 : 1;
 				setSessionRenameError(null);
 			};
 			const onSessionArchive = (sessionId) => {
-				archiveSession(sessionId).catch((reason) => {
-					console.warn("session archive rejected:", reason);
-				});
+				const session = list.byId[sessionId];
+				const descendantCount = countSessionDescendantsFromList(
+					list,
+					sessionId
+				);
+				if (descendantCount > 0) {
+					setArchiveTarget({
+						sessionId,
+						title: session
+							? session.displayTitle || sessionTitle(session)
+							: sessionId,
+						descendantCount,
+					});
+					setArchiveError(null);
+					return;
+				}
+				archiveSession(sessionId)
+					.then(() => {
+						setNotice(uiLabel("已归档，日志已保留", "Archived; logs retained"));
+					})
+					.catch((reason) => {
+						console.warn("session archive rejected:", reason);
+					});
 			};
-			const [deleteTarget, setDeleteTarget] = (0, react.useState)(null);
+			const [archiveTarget, setArchiveTarget] = (0, react.useState)(null);
+			const [archiving, setArchiving] = (0, react.useState)(false);
+			const [archiveError, setArchiveError] = (0, react.useState)(null);
+			const [notice, setNotice] = (0, react.useState)(null);
+			(0, react.useEffect)(() => {
+				if (notice === null) return;
+				const timer = window.setTimeout(() => setNotice(null), 4000);
+				return () => window.clearTimeout(timer);
+			}, [notice]);
+			const closeArchive = () => {
+				if (archiving) return;
+				setArchiveTarget(null);
+				setArchiveError(null);
+			};
+			const confirmArchive = () => {
+				if (archiving || archiveTarget === null) return;
+				setArchiving(true);
+				setArchiveError(null);
+				archiveSession(archiveTarget.sessionId)
+					.then(() => {
+						setArchiving(false);
+						setArchiveTarget(null);
+						setNotice(
+							uiLabel(
+								"已归档根会话及分支，日志已保留",
+								"Archived root and branches; logs retained"
+							)
+						);
+					})
+					.catch((reason) => {
+						setArchiving(false);
+						setArchiveError(
+							reason instanceof Error ? reason.message : String(reason)
+						);
+					});
+			};
+const [deleteTarget, setDeleteTarget] = (0, react.useState)(null);
 			const [deleting, setDeleting] = (0, react.useState)(false);
 			const [deleteCommittedId, setDeleteCommittedId] = (0, react.useState)(null);
 			const [deleteError, setDeleteError] = (0, react.useState)(null);
@@ -2517,160 +2768,244 @@ return a.id < b.id ? -1 : 1;
 				});
 			};
 			return (0, react_jsx_runtime.jsxs)("div", {
-				className: clsx(WorkspaceBrowser_module_css_default.root, !wide && WorkspaceBrowser_module_css_default.rail),
+				className: clsx(
+					WorkspaceBrowser_module_css_default.root,
+					!wide && WorkspaceBrowser_module_css_default.rail
+				),
 				children: [
 					(0, react_jsx_runtime.jsxs)("div", {
 						className: WorkspaceBrowser_module_css_default.sectionHeader,
 						children: [
-							wide && (0, react_jsx_runtime.jsx)("span", {
-								className: clsx(WorkspaceBrowser_module_css_default.sectionLabel, WorkspaceBrowser_module_css_default.wide, searchExpanded && WorkspaceBrowser_module_css_default.sectionLabelHidden),
-								children: groupBy === "flat" ? t("section.sessions") : t("section.workspaces")
-							}),
-							wide && (0, react_jsx_runtime.jsx)("div", {
-								className: clsx(WorkspaceBrowser_module_css_default.searchSlot, searchExpanded && WorkspaceBrowser_module_css_default.searchSlotExpanded),
-								children: (0, react_jsx_runtime.jsxs)("div", {
-									ref: searchRoot,
-									className: clsx(WorkspaceBrowser_module_css_default.search, searchExpanded && WorkspaceBrowser_module_css_default.searchExpanded),
-									onClick: () => {
-										setWsPickerOpen(false);
-										setSearchExpanded(true);
-										searchInput.current?.focus();
-									},
-									children: [
-										(0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Tooltip, {
-											label: t("search"),
-											side: "bottom",
-											delayMs: 500,
-											disabled: searchExpanded,
-											children: (0, react_jsx_runtime.jsx)("button", {
-												type: "button",
-												className: WorkspaceBrowser_module_css_default.searchButton,
-												"aria-label": t("search.sessions.aria"),
-												"aria-expanded": searchExpanded,
-												onClick: () => {
-													setWsPickerOpen(false);
-													setSearchExpanded(true);
+							wide &&
+								(0, react_jsx_runtime.jsx)("span", {
+									className: clsx(
+										WorkspaceBrowser_module_css_default.sectionLabel,
+										WorkspaceBrowser_module_css_default.wide,
+										searchExpanded &&
+											WorkspaceBrowser_module_css_default.sectionLabelHidden
+									),
+									children:
+										groupBy === "flat"
+											? t("section.sessions")
+											: t("section.workspaces"),
+								}),
+							wide &&
+								(0, react_jsx_runtime.jsx)("div", {
+									className: clsx(
+										WorkspaceBrowser_module_css_default.searchSlot,
+										searchExpanded &&
+											WorkspaceBrowser_module_css_default.searchSlotExpanded
+									),
+									children: (0, react_jsx_runtime.jsxs)("div", {
+										ref: searchRoot,
+										className: clsx(
+											WorkspaceBrowser_module_css_default.search,
+											searchExpanded &&
+												WorkspaceBrowser_module_css_default.searchExpanded
+										),
+										onClick: () => {
+											setWsPickerOpen(false);
+											setSearchExpanded(true);
+											searchInput.current?.focus();
+										},
+										children: [
+											(0, react_jsx_runtime.jsx)(
+												_deepseek_ai_dsh_client_ui_primitives.Tooltip,
+												{
+													label: t("search"),
+													side: "bottom",
+													delayMs: 500,
+													disabled: searchExpanded,
+													children: (0, react_jsx_runtime.jsx)("button", {
+														type: "button",
+														className:
+															WorkspaceBrowser_module_css_default.searchButton,
+														"aria-label": t("search.sessions.aria"),
+														"aria-expanded": searchExpanded,
+														onClick: () => {
+															setWsPickerOpen(false);
+															setSearchExpanded(true);
+														},
+														children: (0, react_jsx_runtime.jsx)(
+															_deepseek_ai_dsh_client_ui_primitives.IconSearchOutline16,
+															{ size: searchExpanded ? 11 : 14 }
+														),
+													}),
+												}
+											),
+											(0, react_jsx_runtime.jsx)("input", {
+												ref: searchInput,
+												className:
+													WorkspaceBrowser_module_css_default.searchInput,
+												type: "text",
+												placeholder: t("search.placeholder"),
+												maxLength: SEARCH_QUERY_MAX_CODE_UNITS,
+												value: query,
+												tabIndex: searchExpanded ? 0 : -1,
+												onChange: (e) => {
+													setQuery(sanitizeSearchQuery(e.target.value));
 												},
-												children: (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.IconSearchOutline16, { size: searchExpanded ? 11 : 14 })
-											})
-										}),
-										(0, react_jsx_runtime.jsx)("input", {
-											ref: searchInput,
-											className: WorkspaceBrowser_module_css_default.searchInput,
-											type: "text",
-											placeholder: t("search.placeholder"),
-											maxLength: SEARCH_QUERY_MAX_CODE_UNITS,
-											value: query,
-											tabIndex: searchExpanded ? 0 : -1,
-											onChange: (e) => {
-												setQuery(sanitizeSearchQuery(e.target.value));
-											},
-											onKeyDown: (e) => {
-												if (e.key !== "Escape") return;
-												setQuery("");
-												setSearchExpanded(false);
-											}
-										}),
-										searchExpanded && (0, react_jsx_runtime.jsx)("button", {
+												onKeyDown: (e) => {
+													if (e.key !== "Escape") return;
+													setQuery("");
+													setSearchExpanded(false);
+												},
+											}),
+											searchExpanded &&
+												(0, react_jsx_runtime.jsx)("button", {
+													type: "button",
+													className:
+														WorkspaceBrowser_module_css_default.clearButton,
+													"aria-label": t("search.clear"),
+													onClick: (e) => {
+														e.stopPropagation();
+														setQuery("");
+														setSearchExpanded(false);
+													},
+													children: (0, react_jsx_runtime.jsx)(
+														_deepseek_ai_dsh_client_ui_primitives.IconCloseFill14,
+														{}
+													),
+												}),
+										],
+									}),
+								}),
+							directoryFlowAvailable &&
+								(0, react_jsx_runtime.jsx)(
+									_deepseek_ai_dsh_client_ui_primitives.Tooltip,
+									{
+										label: t("workspace.add"),
+										side: "bottom",
+										delayMs: 500,
+										children: (0, react_jsx_runtime.jsx)("button", {
+											ref: wsPlusRef,
 											type: "button",
-											className: WorkspaceBrowser_module_css_default.clearButton,
-											"aria-label": t("search.clear"),
-											onClick: (e) => {
-												e.stopPropagation();
-												setQuery("");
-												setSearchExpanded(false);
+											className: WorkspaceBrowser_module_css_default.iconButton,
+											"aria-label": t("workspace.add"),
+											onClick: () => {
+												setWsPickerOpen((v) => !v);
 											},
-											children: (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.IconCloseFill14, {})
-										})
-									]
-								})
-							}),
-								directoryFlowAvailable && (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Tooltip, {
-								label: t("workspace.add"),
-								side: "bottom",
-								delayMs: 500,
-								children: (0, react_jsx_runtime.jsx)("button", {
-									ref: wsPlusRef,
-									type: "button",
-									className: WorkspaceBrowser_module_css_default.iconButton,
-									"aria-label": t("workspace.add"),
-									onClick: () => {
-										setWsPickerOpen((v) => !v);
-									},
-									children: (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.IconProjectAddOutline16, { size: wide ? 16 : 18 })
-								})
-							}),
+											children: (0, react_jsx_runtime.jsx)(
+												_deepseek_ai_dsh_client_ui_primitives.IconProjectAddOutline16,
+												{ size: wide ? 16 : 18 }
+											),
+										}),
+									}
+								),
 							(0, react_jsx_runtime.jsxs)("div", {
-								className: clsx(WorkspaceBrowser_module_css_default.headerActions, wide && searchExpanded && WorkspaceBrowser_module_css_default.headerActionsHidden),
+								className: clsx(
+									WorkspaceBrowser_module_css_default.headerActions,
+									wide &&
+										searchExpanded &&
+										WorkspaceBrowser_module_css_default.headerActionsHidden
+								),
 								style: selectionMode ? { maxWidth: "none" } : void 0,
 								children: [
-								selectionMode && wide ? (0, react_jsx_runtime.jsxs)("div", {
-									style: { display: "inline-flex", alignItems: "center", gap: 8, flex: "none" },
-									children: [
-										(0, react_jsx_runtime.jsx)("span", {
-											style: { fontSize: 12, color: "var(--dsw-alias-label-secondary)", whiteSpace: "nowrap" },
-											children: `${selectedIds.size} ${uiLabel("个已选", "selected")}`
-										}),
-										(0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Button, {
-											variant: "outline",
-											disabled: selectedIds.size === 0,
-											onClick: archiveSelected,
-											children: uiLabel("批量归档", "Archive selected")
-										}),
-										(0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Button, {
-											variant: "outline",
-											onClick: clearSelection,
-											children: t("cancel")
-										})
-									]
-								}) : (0, react_jsx_runtime.jsxs)(react_jsx_runtime.Fragment, {
-									children: [
-										wide && (0, react_jsx_runtime.jsx)(MoreMenu, {
-											filter,
-											onPickFilter: (id) => {
-												setLocalFilter(id);
-												try {
-													localStorage.setItem("dsh.branch-workspace.filter", id);
-												} catch {}
-												if (typeof actions.setFilter === "function") actions.setFilter(id);
-											},
-											onBatchSelect: () => setSelectionMode(true),
-											onCreateWorkspace: () => setWsPickerOpen(true),
-											groupBy,
-											allGroupsExpanded,
-											onToggleAllGroups: () => {
-												const next = !allGroupsExpanded;
-												for (const key of allWorkspaceKeys) actions.setGroupExpanded(key, next);
-											},
-											allBranchesCollapsed,
-											onToggleAllBranches: () => {
-												const next = !allBranchesCollapsed;
-												setGlobalBranchToggle((v) => ({ version: v.version + 1, collapsed: next }));
-												if (typeof actions.setAllBranchesCollapsed === "function") {
-													for (const key of allWorkspaceKeys) {
-														actions.setAllBranchesCollapsed(key, branchIdsByAccount.get(key) || [], next);
-													}
-												}
-											},
-											onRefresh: () => {
-												if (typeof refreshSessions === "function") refreshSessions();
-											},
-											t
-										}),
-										wide && (0, react_jsx_runtime.jsx)(ViewOptionsMenu, {
-											groupBy,
-											orderBy,
-											onGroupPick: (mode) => {
-												actions.setGroupBy(mode);
-											},
-											onOrderPick: (mode) => {
-												actions.setOrderBy(mode);
-										},
-										t
-									})
-								]
-							})
-							]
+									selectionMode && wide
+										? (0, react_jsx_runtime.jsxs)("div", {
+												style: {
+													display: "inline-flex",
+													alignItems: "center",
+													gap: 8,
+													flex: "none",
+												},
+												children: [
+													(0, react_jsx_runtime.jsx)("span", {
+														style: {
+															fontSize: 12,
+															color: "var(--dsw-alias-label-secondary)",
+															whiteSpace: "nowrap",
+														},
+														children: `${selectedIds.size} ${uiLabel(
+															"个已选",
+															"selected"
+														)}`,
+													}),
+													(0, react_jsx_runtime.jsx)(
+														_deepseek_ai_dsh_client_ui_primitives.Button,
+														{
+															variant: "outline",
+															disabled: selectedIds.size === 0,
+															onClick: archiveSelected,
+															children: uiLabel("批量归档", "Archive selected"),
+														}
+													),
+													(0, react_jsx_runtime.jsx)(
+														_deepseek_ai_dsh_client_ui_primitives.Button,
+														{
+															variant: "outline",
+															onClick: clearSelection,
+															children: t("cancel"),
+														}
+													),
+												],
+										  })
+										: (0, react_jsx_runtime.jsxs)(react_jsx_runtime.Fragment, {
+												children: [
+													wide &&
+														(0, react_jsx_runtime.jsx)(MoreMenu, {
+															filter,
+															onPickFilter: (id) => {
+																setLocalFilter(id);
+																try {
+																	localStorage.setItem(
+																		"dsh.branch-workspace.filter",
+																		id
+																	);
+																} catch {}
+																if (typeof actions.setFilter === "function")
+																	actions.setFilter(id);
+															},
+															onBatchSelect: () => setSelectionMode(true),
+															onCreateWorkspace: () => setWsPickerOpen(true),
+															groupBy,
+															allGroupsExpanded,
+															onToggleAllGroups: () => {
+																const next = !allGroupsExpanded;
+																for (const key of allWorkspaceKeys)
+																	actions.setGroupExpanded(key, next);
+															},
+															allBranchesCollapsed,
+															onToggleAllBranches: () => {
+																const next = !allBranchesCollapsed;
+																setGlobalBranchToggle((v) => ({
+																	version: v.version + 1,
+																	collapsed: next,
+																}));
+																if (
+																	typeof actions.setAllBranchesCollapsed ===
+																	"function"
+																) {
+																	for (const key of allWorkspaceKeys) {
+																		actions.setAllBranchesCollapsed(
+																			key,
+																			branchIdsByAccount.get(key) || [],
+																			next
+																		);
+																	}
+																}
+															},
+															onRefresh: () => {
+																if (typeof refreshSessions === "function")
+																	refreshSessions();
+															},
+															t,
+														}),
+													wide &&
+														(0, react_jsx_runtime.jsx)(ViewOptionsMenu, {
+															groupBy,
+															orderBy,
+															onGroupPick: (mode) => {
+																actions.setGroupBy(mode);
+															},
+															onOrderPick: (mode) => {
+																actions.setOrderBy(mode);
+															},
+															t,
+														}),
+												],
+										  }),
+								],
 							}),
 							(0, react_jsx_runtime.jsx)(WorkspacePickFlow, {
 								t,
@@ -2679,7 +3014,8 @@ return a.id < b.id ? -1 : 1;
 								useWorkspaces,
 								createWorkspace,
 								useDirectoryFlow,
-								renderDirectoryFlow: (owner) => renderSlot("sidebar.workspaces.directoryFlow", owner),
+								renderDirectoryFlow: (owner) =>
+									renderSlot("sidebar.workspaces.directoryFlow", owner),
 								addOnly: true,
 								side: "right",
 								onPick: (workspaceId) => {
@@ -2688,230 +3024,378 @@ return a.id < b.id ? -1 : 1;
 								},
 								onClose: () => {
 									setWsPickerOpen(false);
-								}
-							})
-						]
-					}),
-					!wide && (0, react_jsx_runtime.jsx)("div", {
-						className: WorkspaceBrowser_module_css_default.search,
-						children: (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Tooltip, {
-							label: t("search"),
-							children: (0, react_jsx_runtime.jsx)("button", {
-								type: "button",
-								className: WorkspaceBrowser_module_css_default.searchButton,
-								"aria-label": t("search.sessions.aria"),
-								onClick: () => {
-									setSearchExpanded(true);
-									setSearchOnExpand(true);
-									expandSidebar();
 								},
-								children: (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.IconSearchOutline16, { size: 18 })
-							})
-						})
+							}),
+						],
 					}),
+					!wide &&
+						(0, react_jsx_runtime.jsx)("div", {
+							className: WorkspaceBrowser_module_css_default.search,
+							children: (0, react_jsx_runtime.jsx)(
+								_deepseek_ai_dsh_client_ui_primitives.Tooltip,
+								{
+									label: t("search"),
+									children: (0, react_jsx_runtime.jsx)("button", {
+										type: "button",
+										className: WorkspaceBrowser_module_css_default.searchButton,
+										"aria-label": t("search.sessions.aria"),
+										onClick: () => {
+											setSearchExpanded(true);
+											setSearchOnExpand(true);
+											expandSidebar();
+										},
+										children: (0, react_jsx_runtime.jsx)(
+											_deepseek_ai_dsh_client_ui_primitives.IconSearchOutline16,
+											{ size: 18 }
+										),
+									}),
+								}
+							),
+						}),
 					(0, react_jsx_runtime.jsx)("div", {
 						className: WorkspaceBrowser_module_css_default.listArea,
-						children: wide && (normalizedQuery !== "" ? (0, react_jsx_runtime.jsx)(SearchResults, {
-							useSessions,
-							open,
-							workspaces,
-							archivedSessionIds,
-							query: normalizedQuery,
-							remote: remoteSearch,
-							resultLimit: searchResultLimit,
-							t
-						}) : groupBy === "flat" ? (0, react_jsx_runtime.jsx)(FlatList, {
-							useSessions,
-							open,
-							forkSession,
-							onSessionRename,
-							onSessionArchive,
-							archivedSessionIds,
-							orderBy,
-							sessionOrderByAccount,
-							sessionUpdatedAtByAccount,
-							syncSessionOrderAccount: actions.syncSessionOrderAccount,
-							setSessionOrder: actions.setSessionOrder,
-							filter,
-							selectionMode,
-							selectedIds,
-							onToggleSelect: toggleSelect,
-							t
-						}) : (0, react_jsx_runtime.jsx)(SessionTree, {
-							useSessions,
-							onSessionRename,
-							onSessionArchive,
-							forkSession,
-							workspaces,
-							groupExpansion,
-							setGroupExpanded: actions.setGroupExpanded,
-							sessionOrderByAccount,
-							sessionUpdatedAtByAccount,
-							syncSessionOrderAccount: actions.syncSessionOrderAccount,
-							setSessionOrder: actions.setSessionOrder,
-							archivedSessionIds,
-							startSession,
-							open,
-							insertWorkspaceBefore,
-							insertSessionBefore,
-							orderBy,
-							collapsedBranchesByAccount,
-							setBranchCollapsed: actions.setBranchCollapsed,
-							setAllBranchesCollapsed: actions.setAllBranchesCollapsed,
-							globalBranchToggle,
-							filter,
-							selectionMode,
-							selectedIds,
-							onToggleSelect: toggleSelect,
-							t,
-							onRenameRequest: (workspaceId, currentTitle) => {
-								setRenameTarget({
-									workspaceId,
-									currentTitle
-								});
-								setRenameDraft(currentTitle);
-								setRenameError(null);
-							},
-							onDeleteRequest: (workspaceId, title) => {
-								setDeleteTarget({
-									workspaceId,
-									title
-								});
-								setDeleteError(null);
-							}
-						}))
+						children:
+							wide &&
+							(normalizedQuery !== ""
+								? (0, react_jsx_runtime.jsx)(SearchResults, {
+										useSessions,
+										open,
+										workspaces,
+										archivedSessionIds,
+										query: normalizedQuery,
+										remote: remoteSearch,
+										resultLimit: searchResultLimit,
+										t,
+								  })
+								: groupBy === "flat"
+								? (0, react_jsx_runtime.jsx)(FlatList, {
+										useSessions,
+										open,
+										forkSession,
+										onSessionRename,
+										onSessionArchive,
+										archivedSessionIds,
+										orderBy,
+										sessionOrderByAccount,
+										sessionUpdatedAtByAccount,
+										syncSessionOrderAccount: actions.syncSessionOrderAccount,
+										setSessionOrder: actions.setSessionOrder,
+										filter,
+										selectionMode,
+										selectedIds,
+										onToggleSelect: toggleSelect,
+										t,
+								  })
+								: (0, react_jsx_runtime.jsx)(SessionTree, {
+										useSessions,
+										onSessionRename,
+										onSessionArchive,
+										forkSession,
+										workspaces,
+										groupExpansion,
+										setGroupExpanded: actions.setGroupExpanded,
+										sessionOrderByAccount,
+										sessionUpdatedAtByAccount,
+										syncSessionOrderAccount: actions.syncSessionOrderAccount,
+										setSessionOrder: actions.setSessionOrder,
+										archivedSessionIds,
+										startSession,
+										open,
+										insertWorkspaceBefore,
+										insertSessionBefore,
+										orderBy,
+										collapsedBranchesByAccount,
+										setBranchCollapsed: actions.setBranchCollapsed,
+										setAllBranchesCollapsed: actions.setAllBranchesCollapsed,
+										globalBranchToggle,
+										filter,
+										selectionMode,
+										selectedIds,
+										onToggleSelect: toggleSelect,
+										t,
+										onRenameRequest: (workspaceId, currentTitle) => {
+											setRenameTarget({
+												workspaceId,
+												currentTitle,
+											});
+											setRenameDraft(currentTitle);
+											setRenameError(null);
+										},
+										onDeleteRequest: (workspaceId, title) => {
+											setDeleteTarget({
+												workspaceId,
+												title,
+												sessionCount:
+													workspaces.find(
+														(workspace) => workspace.workspaceId === workspaceId
+													)?.sessionIds.length ?? 0,
+											});
+											setDeleteError(null);
+										},
+								  })),
 					}),
-					(0, react_jsx_runtime.jsxs)(_deepseek_ai_dsh_client_ui_primitives.Modal, {
-						open: renameTarget !== null,
-						onClose: closeRename,
-						closeLabel: t("close"),
-						title: t("rename.workspace.title"),
-						footer: (0, react_jsx_runtime.jsxs)(react_jsx_runtime.Fragment, { children: [(0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Button, {
-							variant: "outline",
-							disabled: renaming,
-							onClick: closeRename,
-							children: t("cancel")
-						}), (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Button, {
-							variant: "primary",
-							disabled: renameBlocked,
-							onClick: confirmRename,
-							children: t("rename")
-						})] }),
-						children: [
-							(0, react_jsx_runtime.jsx)("input", {
-								className: WorkspaceBrowser_module_css_default.renameInput,
-								value: renameDraft,
-								"aria-label": t("field.workspaceName"),
-								autoFocus: true,
-								disabled: renaming,
-								onFocus: (e) => {
-									e.target.select();
-								},
-								onChange: (e) => {
-									setRenameDraft(e.target.value);
-									setRenameError(null);
-								},
-								onCompositionStart: () => {
-									composingRef.current = true;
-								},
-								onCompositionEnd: () => {
-									composingRef.current = false;
-								},
-								onKeyDown: (e) => {
-									if (e.key === "Enter" && !composingRef.current) {
-										e.preventDefault();
-										confirmRename();
-									}
-								}
+					(0, react_jsx_runtime.jsxs)(
+						_deepseek_ai_dsh_client_ui_primitives.Modal,
+						{
+							open: renameTarget !== null,
+							onClose: closeRename,
+							closeLabel: t("close"),
+							title: t("rename.workspace.title"),
+							footer: (0, react_jsx_runtime.jsxs)(react_jsx_runtime.Fragment, {
+								children: [
+									(0, react_jsx_runtime.jsx)(
+										_deepseek_ai_dsh_client_ui_primitives.Button,
+										{
+											variant: "outline",
+											disabled: renaming,
+											onClick: closeRename,
+											children: t("cancel"),
+										}
+									),
+									(0, react_jsx_runtime.jsx)(
+										_deepseek_ai_dsh_client_ui_primitives.Button,
+										{
+											variant: "primary",
+											disabled: renameBlocked,
+											onClick: confirmRename,
+											children: t("rename"),
+										}
+									),
+								],
 							}),
-							renameDuplicate && (0, react_jsx_runtime.jsx)("div", {
-								className: WorkspaceBrowser_module_css_default.renameError,
-								role: "alert",
-								children: t("conflict.named", { name: renameTrimmed })
+							children: [
+								(0, react_jsx_runtime.jsx)("input", {
+									className: WorkspaceBrowser_module_css_default.renameInput,
+									value: renameDraft,
+									"aria-label": t("field.workspaceName"),
+									autoFocus: true,
+									disabled: renaming,
+									onFocus: (e) => {
+										e.target.select();
+									},
+									onChange: (e) => {
+										setRenameDraft(e.target.value);
+										setRenameError(null);
+									},
+									onCompositionStart: () => {
+										composingRef.current = true;
+									},
+									onCompositionEnd: () => {
+										composingRef.current = false;
+									},
+									onKeyDown: (e) => {
+										if (e.key === "Enter" && !composingRef.current) {
+											e.preventDefault();
+											confirmRename();
+										}
+									},
+								}),
+								renameDuplicate &&
+									(0, react_jsx_runtime.jsx)("div", {
+										className: WorkspaceBrowser_module_css_default.renameError,
+										role: "alert",
+										children: t("conflict.named", { name: renameTrimmed }),
+									}),
+								renameError !== null &&
+									(0, react_jsx_runtime.jsx)("div", {
+										className: WorkspaceBrowser_module_css_default.renameError,
+										role: "alert",
+										children: renameError,
+									}),
+							],
+						}
+					),
+					(0, react_jsx_runtime.jsxs)(
+						_deepseek_ai_dsh_client_ui_primitives.Modal,
+						{
+							open: sessionRenameTarget !== null,
+							onClose: closeSessionRename,
+							closeLabel: t("close"),
+							title: t("rename.session.title"),
+							footer: (0, react_jsx_runtime.jsxs)(react_jsx_runtime.Fragment, {
+								children: [
+									(0, react_jsx_runtime.jsx)(
+										_deepseek_ai_dsh_client_ui_primitives.Button,
+										{
+											variant: "outline",
+											disabled: sessionRenaming,
+											onClick: closeSessionRename,
+											children: t("cancel"),
+										}
+									),
+									(0, react_jsx_runtime.jsx)(
+										_deepseek_ai_dsh_client_ui_primitives.Button,
+										{
+											variant: "primary",
+											disabled: sessionRenameBlocked,
+											onClick: confirmSessionRename,
+											children: t("rename"),
+										}
+									),
+								],
 							}),
-							renameError !== null && (0, react_jsx_runtime.jsx)("div", {
-								className: WorkspaceBrowser_module_css_default.renameError,
-								role: "alert",
-								children: renameError
-							})
-						]
-					}),
-					(0, react_jsx_runtime.jsxs)(_deepseek_ai_dsh_client_ui_primitives.Modal, {
-						open: sessionRenameTarget !== null,
-						onClose: closeSessionRename,
-						closeLabel: t("close"),
-						title: t("rename.session.title"),
-						footer: (0, react_jsx_runtime.jsxs)(react_jsx_runtime.Fragment, { children: [(0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Button, {
-							variant: "outline",
-							disabled: sessionRenaming,
-							onClick: closeSessionRename,
-							children: t("cancel")
-						}), (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Button, {
-							variant: "primary",
-							disabled: sessionRenameBlocked,
-							onClick: confirmSessionRename,
-							children: t("rename")
-						})] }),
-						children: [(0, react_jsx_runtime.jsx)("input", {
-							className: WorkspaceBrowser_module_css_default.renameInput,
-							value: sessionRenameDraft,
-							"aria-label": t("field.sessionName"),
-							autoFocus: true,
-							disabled: sessionRenaming,
-							onFocus: (e) => {
-								e.target.select();
-							},
-							onChange: (e) => {
-								setSessionRenameDraft(e.target.value);
-								setSessionRenameError(null);
-							},
-							onCompositionStart: () => {
-								composingRef.current = true;
-							},
-							onCompositionEnd: () => {
-								composingRef.current = false;
-							},
-							onKeyDown: (e) => {
-								if (e.key === "Enter" && !composingRef.current) {
-									e.preventDefault();
-									confirmSessionRename();
-								}
-							}
-						}), sessionRenameError !== null && (0, react_jsx_runtime.jsx)("div", {
-							className: WorkspaceBrowser_module_css_default.renameError,
-							role: "alert",
-							children: sessionRenameError
-						})]
-					}),
-					(0, react_jsx_runtime.jsxs)(_deepseek_ai_dsh_client_ui_primitives.Modal, {
-						open: deleteTarget !== null,
-						onClose: closeDelete,
-						closeLabel: t("close"),
-						title: t("delete.workspace"),
-						...deleteTarget === null ? {} : { description: t("delete.desc", { name: deleteTarget.title }) },
-						footer: (0, react_jsx_runtime.jsxs)(react_jsx_runtime.Fragment, { children: [(0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Button, {
-							variant: "outline",
-							disabled: deleting,
-							onClick: closeDelete,
-							children: t("cancel")
-						}), (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Button, {
-							variant: "outline",
-							className: WorkspaceBrowser_module_css_default.deleteAction,
-							disabled: deleting,
-							onClick: confirmDelete,
-							children: t("delete.workspace")
-						})] }),
-						children: [deleting && (0, react_jsx_runtime.jsx)("div", {
-							className: WorkspaceBrowser_module_css_default.deleteStatus,
+							children: [
+								(0, react_jsx_runtime.jsx)("input", {
+									className: WorkspaceBrowser_module_css_default.renameInput,
+									value: sessionRenameDraft,
+									"aria-label": t("field.sessionName"),
+									autoFocus: true,
+									disabled: sessionRenaming,
+									onFocus: (e) => {
+										e.target.select();
+									},
+									onChange: (e) => {
+										setSessionRenameDraft(e.target.value);
+										setSessionRenameError(null);
+									},
+									onCompositionStart: () => {
+										composingRef.current = true;
+									},
+									onCompositionEnd: () => {
+										composingRef.current = false;
+									},
+									onKeyDown: (e) => {
+										if (e.key === "Enter" && !composingRef.current) {
+											e.preventDefault();
+											confirmSessionRename();
+										}
+									},
+								}),
+								sessionRenameError !== null &&
+									(0, react_jsx_runtime.jsx)("div", {
+										className: WorkspaceBrowser_module_css_default.renameError,
+										role: "alert",
+										children: sessionRenameError,
+									}),
+							],
+						}
+					),
+					(0, react_jsx_runtime.jsxs)(
+						_deepseek_ai_dsh_client_ui_primitives.Modal,
+						{
+							open: archiveTarget !== null,
+							onClose: closeArchive,
+							closeLabel: t("close"),
+							title: uiLabel("归档分支根会话", "Archive branch root"),
+							...(archiveTarget === null
+								? {}
+								: {
+										description: `${uiLabel(
+											"将归档根会话“",
+											'This will archive root "'
+										)}${archiveTarget.title}${uiLabel("”及其 ", '" and its ')}${
+											archiveTarget.descendantCount
+										}${uiLabel(
+											" 个分支。日志会保留，之后可取消归档。",
+											" descendant branches. Logs are kept and can be unarchived later."
+										)}`,
+								  }),
+							footer: (0, react_jsx_runtime.jsxs)(react_jsx_runtime.Fragment, {
+								children: [
+									(0, react_jsx_runtime.jsx)(
+										_deepseek_ai_dsh_client_ui_primitives.Button,
+										{
+											variant: "outline",
+											disabled: archiving,
+											onClick: closeArchive,
+											children: t("cancel"),
+										}
+									),
+									(0, react_jsx_runtime.jsx)(
+										_deepseek_ai_dsh_client_ui_primitives.Button,
+										{
+											variant: "primary",
+											disabled: archiving,
+											onClick: confirmArchive,
+											children: uiLabel("归档", "Archive"),
+										}
+									),
+								],
+							}),
+							children: [
+								archiving &&
+									(0, react_jsx_runtime.jsx)("div", {
+										className: WorkspaceBrowser_module_css_default.deleteStatus,
+										role: "status",
+										children: uiLabel("正在归档…", "Archiving…"),
+									}),
+								archiveError !== null &&
+									(0, react_jsx_runtime.jsx)("div", {
+										className: WorkspaceBrowser_module_css_default.renameError,
+										role: "alert",
+										children: archiveError,
+									}),
+							],
+						}
+					),
+					(0, react_jsx_runtime.jsxs)(
+						_deepseek_ai_dsh_client_ui_primitives.Modal,
+						{
+							open: deleteTarget !== null,
+							onClose: closeDelete,
+							closeLabel: t("close"),
+							title: t("delete.workspace"),
+							...(deleteTarget === null
+								? {}
+								: {
+										description: `${t("delete.desc", {
+											name: deleteTarget.title,
+										})}${
+											deleteTarget.sessionCount > 0
+												? ` ${uiLabel(
+														`（包含 ${deleteTarget.sessionCount} 个会话）`,
+														`(contains ${deleteTarget.sessionCount} sessions)`
+												  )}`
+												: ""
+										}`,
+								  }),
+							footer: (0, react_jsx_runtime.jsxs)(react_jsx_runtime.Fragment, {
+								children: [
+									(0, react_jsx_runtime.jsx)(
+										_deepseek_ai_dsh_client_ui_primitives.Button,
+										{
+											variant: "outline",
+											disabled: deleting,
+											onClick: closeDelete,
+											children: t("cancel"),
+										}
+									),
+									(0, react_jsx_runtime.jsx)(
+										_deepseek_ai_dsh_client_ui_primitives.Button,
+										{
+											variant: "outline",
+											className:
+												WorkspaceBrowser_module_css_default.deleteAction,
+											disabled: deleting,
+											onClick: confirmDelete,
+											children: t("delete.workspace"),
+										}
+									),
+								],
+							}),
+							children: [
+								deleting &&
+									(0, react_jsx_runtime.jsx)("div", {
+										className: WorkspaceBrowser_module_css_default.deleteStatus,
+										role: "status",
+										children: t("delete.pending"),
+									}),
+								deleteError !== null &&
+									(0, react_jsx_runtime.jsx)("div", {
+										className: WorkspaceBrowser_module_css_default.renameError,
+										role: "alert",
+										children: deleteError,
+									}),
+							],
+						}
+					),
+					notice !== null &&
+						(0, react_jsx_runtime.jsx)("div", {
+							className: "dsh-bwf-toast",
 							role: "status",
-							children: t("delete.pending")
-						}), deleteError !== null && (0, react_jsx_runtime.jsx)("div", {
-							className: WorkspaceBrowser_module_css_default.renameError,
-							role: "alert",
-							children: deleteError
-						})]
-					})
-				]
+							children: notice,
+						}),
+				],
 			});
 		}
 		//#endregion

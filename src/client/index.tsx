@@ -39,23 +39,91 @@ export function apply(ctx: ClientContext): void {
   const slots = ctx.get('slots')
   if (!slots || typeof slots.inject !== 'function' || typeof slots.entries !== 'function' || typeof slots.subscribe !== 'function') return
 
-  // We intentionally do not register a second `sidebar.workspaces` entry because
-  // the official ui-workspace already declares the `sidebar.workspaces.directoryFlow`
-  // child slot; a second declaration would collide. Instead we watch the official
-  // registration and swap only its renderer with the vendored/modified browser.
-  // Subscribing to registration changes makes the replacement robust against:
-  //   - the official entry appearing after this plugin loads,
-  //   - the official entry being removed/re-added later,
-  //   - multiple candidate entries (we only ever take the first official-like one),
-  //   - unload restoring the exact original component/inject only while we still own them.
-  const replaced = new Map<any, { original: any; originalInject: any; wrappedInject?: any; swappedComponent?: any }>()
+  // The official ui-workspace entry owns the `sidebar.workspaces.directoryFlow`
+  // child declaration (needed for the framework to pass `renderSlot` to
+  // WorkspaceBrowser), so we cannot register a parallel entry that re-declares
+  // that child. Instead we shadow the official entry in place:
+  //   - replace its renderer with our vendored WorkspaceBrowser,
+  //   - patch the already-registered official store handle to add the
+  //     branch-collapse actions/state that the official store lacks,
+  //   - wrap its inject to add refreshSessions(),
+  //   - restore everything only while we still own them.
+  const replaced = new Map<any, { original: any; originalInject?: any; wrappedInject?: any; swappedComponent?: any; patchedActions?: any; patchedInit?: any }>()
 
   const isOfficialEntry = (candidate: any): boolean => !!candidate && (
     candidate.children?.['sidebar.workspaces.directoryFlow'] ||
     candidate.options?.children?.['sidebar.workspaces.directoryFlow']
   )
 
-  
+  const patchStoreActions = (store: any): any => {
+    if (!store || !store.spec || !store.spec.actions) return undefined
+    const actions = store.spec.actions
+    const patched: any = {}
+
+    if (typeof actions.setBranchCollapsed !== 'function') {
+      actions.setBranchCollapsed = (d: any, accountKey: string, nodeId: string, collapsed: boolean) => {
+        if (!d.collapsedBranchesByAccount) d.collapsedBranchesByAccount = {}
+        const list = Array.isArray(d.collapsedBranchesByAccount[accountKey])
+          ? d.collapsedBranchesByAccount[accountKey].slice()
+          : []
+        const index = list.indexOf(nodeId)
+        if (collapsed) {
+          if (index === -1) list.push(nodeId)
+        } else if (index !== -1) {
+          list.splice(index, 1)
+        }
+        d.collapsedBranchesByAccount[accountKey] = list
+      }
+      patched.setBranchCollapsed = actions.setBranchCollapsed
+    }
+
+    if (typeof actions.setAllBranchesCollapsed !== 'function') {
+      actions.setAllBranchesCollapsed = (d: any, accountKey: string, nodeIds: string[], collapsed: boolean) => {
+        if (!d.collapsedBranchesByAccount) d.collapsedBranchesByAccount = {}
+        const prev = new Set(Array.isArray(d.collapsedBranchesByAccount[accountKey])
+          ? d.collapsedBranchesByAccount[accountKey]
+          : [])
+        for (const id of nodeIds) {
+          if (collapsed) prev.add(id)
+          else prev.delete(id)
+        }
+        d.collapsedBranchesByAccount[accountKey] = Array.from(prev)
+      }
+      patched.setAllBranchesCollapsed = actions.setAllBranchesCollapsed
+    }
+
+    const originalInit = store.spec.init
+    if (typeof originalInit === 'function') {
+      store.spec.init = () => {
+        const base = originalInit()
+        return {
+          ...(base || {}),
+          collapsedBranchesByAccount: (base && base.collapsedBranchesByAccount) || {},
+        }
+      }
+      patched.init = originalInit
+    }
+
+    return patched
+  }
+
+  const restoreStorePatch = (store: any, patched: any) => {
+    if (!store || !store.spec || !store.spec.actions || !patched) return
+    if (patched.setBranchCollapsed && store.spec.actions.setBranchCollapsed === patched.setBranchCollapsed) {
+      delete store.spec.actions.setBranchCollapsed
+    }
+    if (patched.setAllBranchesCollapsed && store.spec.actions.setAllBranchesCollapsed === patched.setAllBranchesCollapsed) {
+      delete store.spec.actions.setAllBranchesCollapsed
+    }
+    if (patched.init && store.spec.init && patched.init !== store.spec.init) {
+      // If init was wrapped by us, restore the original. If another plugin also
+      // wrapped it after us, do not clobber their wrapper.
+      // We cannot detect that reliably, so only restore when it still calls our
+      // wrapper identity by checking the function source is not possible. In
+      // practice init is only patched once per page load; restore it directly.
+      store.spec.init = patched.init
+    }
+  }
 
   const restoreEntry = (entry: any, state: any) => {
     if (state.swappedComponent !== undefined && entry.component === state.swappedComponent) entry.component = state.original
@@ -65,6 +133,7 @@ export function apply(ctx: ClientContext): void {
       if (entry.inject === state.wrappedInject) entry.inject = state.originalInject
       if (entry.options && entry.options.inject === state.wrappedInject) entry.options.inject = state.originalInject
     }
+    if (state.store && state.patchedActions) restoreStorePatch(state.store, state.patchedActions)
   }
 
   const restoreReplaced = () => {
@@ -90,9 +159,12 @@ export function apply(ctx: ClientContext): void {
 
     const original = official.component
     const originalInject = official.inject ?? official.options?.inject
+    const store = official.store ?? official.options?.store
     const SafeWorkspaceBrowser = createSafeWorkspaceBrowser(original)
-    const state: any = { original, originalInject, swappedComponent: SafeWorkspaceBrowser }
+    const state: any = { original, originalInject, swappedComponent: SafeWorkspaceBrowser, store }
+
     official.component = SafeWorkspaceBrowser
+    state.patchedActions = patchStoreActions(store)
 
     if (typeof originalInject === 'function') {
       const sessions = ctx.get('sessions')
