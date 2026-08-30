@@ -1,6 +1,6 @@
 {
   "name": "dsh-branch-workspace-folders",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "DSH Web sidebar plugin: group forked sessions under their root session in the left workspace area.",
   "private": false,
   "type": "module",

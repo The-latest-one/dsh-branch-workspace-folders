@@ -55,6 +55,8 @@ export function apply(ctx: ClientContext): void {
     candidate.options?.children?.['sidebar.workspaces.directoryFlow']
   )
 
+  
+
   const restoreEntry = (entry: any, state: any) => {
     if (state.swappedComponent !== undefined && entry.component === state.swappedComponent) entry.component = state.original
     else if (entry.component === WorkspaceBrowser) entry.component = state.original

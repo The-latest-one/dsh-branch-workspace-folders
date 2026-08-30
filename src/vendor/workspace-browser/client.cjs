@@ -218,13 +218,12 @@
 			const groupingArchived = filter === "archived" ? new Set() : archived;
 			const groups = [];
 			for (const g of groupByWorkspace(list, workspaces, groupingArchived, view.ungroupedOrder)) {
+				if (filter === "currentWorkspace" && g.key !== currentGroup) continue;
 				let members = g.sessions;
 				if (filter === "running") {
 					members = members.filter((s) => s.running);
 				} else if (filter === "archived") {
 					members = members.filter((s) => archived.has(s.id));
-				} else if (filter === "currentWorkspace") {
-					members = g.key === currentGroup ? members : [];
 				}
 				const expanded = expandedGroups.has(g.key);
 				groups.push({
@@ -523,6 +522,7 @@
 			const ownRow = (0, react_jsx_runtime.jsxs)("div", {
 				className: clsx(Rows_module_css_default.projectRow, menuOpen && Rows_module_css_default.menuOpen),
 				role: "treeitem",
+				"aria-level": 1,
 				"aria-expanded": row.expanded,
 				onClick: onToggle,
 				onContextMenu: (e) => {
@@ -714,6 +714,7 @@
 				type: "button",
 				className: clsx(Rows_module_css_default.searchResultRow, selected && Rows_module_css_default.selected),
 				role: "treeitem",
+				"aria-level": 1,
 				"aria-selected": selected,
 				onClick: () => {
 					onOpen(result.id);
@@ -758,7 +759,7 @@
 		* @param props.t - the browser root's locale seat.
 		* @returns the session row.
 		*/
-		function SessionNodeItem({ node, currentId, now, onOpen, onRename, onFork, onArchive, drag, flat = false, t, depth = 0, collapsed = false, onToggleCollapse, path = [], siblings = [], onJumpSibling, onContextMenu, tabIndex = 0, onKeyDown, selectionMode = false, selected = false, onToggleSelect }) {
+		function SessionNodeItem({ node, currentId, now, onOpen, onRename, onFork, onArchive, drag, flat = false, t, depth = 0, collapsed = false, onToggleCollapse, path = [], siblings = [], onJumpSibling, onContextMenu, selectionMode = false, selected = false, onToggleSelect }) {
 const row = node;
 const title = displayTitle(node, t);
 const rowSelected = node.id === currentId;
@@ -798,9 +799,6 @@ e.preventDefault();
 setMenuOpen(true);
 }
 };
-const handleRowKeyDown = (e) => {
-if (onKeyDown) onKeyDown(e, node);
-};
 return (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.HoverCard, {
 anchor: (0, react_jsx_runtime.jsxs)("div", {
 className: clsx(Rows_module_css_default.sessionRow, rowSelected && Rows_module_css_default.selected, menuOpen && Rows_module_css_default.menuOpen, flat && !showStatus && Rows_module_css_default.flatSessionRowWithoutStatus, drag?.marker === "before" && Rows_module_css_default.dropBefore, drag?.marker === "after" && Rows_module_css_default.dropAfter),
@@ -809,12 +807,10 @@ role: "treeitem",
 "aria-level": depth + 1,
 "aria-selected": rowSelected,
 ...(node.children !== void 0 && node.children.length > 0 ? { "aria-expanded": !collapsed } : {}),
-tabIndex,
 onClick: () => {
 onOpen(node.id);
 },
 onContextMenu: openContextMenu,
-onKeyDown: handleRowKeyDown,
 draggable: drag !== void 0,
 onDragStart: drag === void 0 ? void 0 : (e) => {
 e.dataTransfer.effectAllowed = "move";
@@ -1589,40 +1585,53 @@ return a.id < b.id ? -1 : 1;
 			return null;
 		}
 
-		/** Count every descendant (direct children plus their descendants) of a tree node. */
+		/** Count every descendant (direct children plus their descendants) of a tree node. Cycle-safe. */
 		function countDescendants(node) {
 			let count = 0;
-			for (const child of node.children ?? []) {
-				count += 1 + countDescendants(child);
-			}
+			const seen = new Set();
+			const walk = (current) => {
+				if (seen.has(current.id)) return;
+				seen.add(current.id);
+				for (const child of current.children ?? []) {
+					count += 1;
+					walk(child);
+				}
+			};
+			walk(node);
 			return count;
 		}
-		/** Build a nodeId -> ancestor-title array map for a session tree. */
+		/** Build a nodeId -> ancestor-title array map for a session tree. Cycle-safe. */
 		function buildPathMap(roots) {
 			const map = new Map();
-			const walk = (nodes, ancestors) => {
+			const walk = (nodes, ancestors, seen = new Set()) => {
 				for (const node of nodes) {
+					if (seen.has(node.id)) continue;
+					const nextSeen = new Set(seen);
+					nextSeen.add(node.id);
 					map.set(node.id, ancestors.map((a) => a.title));
-					walk(node.children ?? [], [...ancestors, node]);
+					walk(node.children ?? [], [...ancestors, node], nextSeen);
 				}
 			};
 			walk(roots, []);
 			return map;
 		}
-		/** Build a nodeId -> sibling node array map for a session tree. */
+		/** Build a nodeId -> sibling node array map for a session tree. Cycle-safe. */
 		function buildSiblingsMap(roots) {
 			const map = new Map();
-			const walk = (nodes) => {
+			const walk = (nodes, seen = new Set()) => {
 				for (const node of nodes) {
+					if (seen.has(node.id)) continue;
+					const nextSeen = new Set(seen);
+					nextSeen.add(node.id);
 					const siblings = nodes.filter((n) => n.id !== node.id);
 					map.set(node.id, siblings);
-					walk(node.children ?? []);
+					walk(node.children ?? [], nextSeen);
 				}
 			};
 			walk(roots);
 			return map;
 		}
-		/** Collect ids of nodes that have at least one child (branch nodes). */
+		/** Collect ids of nodes that have at least one child (branch nodes). Cycle-safe. */
 		function collectBranchIds(sessions) {
 			const byId = new Map();
 			for (const session of sessions) {
@@ -1636,29 +1645,51 @@ return a.id < b.id ? -1 : 1;
 				else parent.children.push(node);
 			}
 			const ids = [];
-			const walk = (nodes) => {
+			const walk = (nodes, seen = new Set()) => {
 				for (const node of nodes) {
+					if (seen.has(node.id)) continue;
+					const nextSeen = new Set(seen);
+					nextSeen.add(node.id);
 					if ((node.children || []).length > 0) ids.push(node.id);
-					walk(node.children || []);
+					walk(node.children || [], nextSeen);
 				}
 			};
 			walk(roots);
 			return ids;
 		}
 		/** The scrolling session tree; unmounting drops the sessions subscription and expand-all state. */
-		function SessionTree({ useSessions, startSession, open, forkSession, workspaces, archivedSessionIds, onRenameRequest, onDeleteRequest, onSessionRename, onSessionArchive, insertWorkspaceBefore, insertSessionBefore, orderBy, groupExpansion, setGroupExpanded, sessionOrderByAccount, sessionUpdatedAtByAccount, syncSessionOrderAccount, setSessionOrder, collapsedBranchesByAccount, setBranchCollapsed, setAllBranchesCollapsed, filter = "all", selectionMode = false, selectedIds, onToggleSelect, t }) {
+		function SessionTree({ useSessions, startSession, open, forkSession, workspaces, archivedSessionIds, onRenameRequest, onDeleteRequest, onSessionRename, onSessionArchive, insertWorkspaceBefore, insertSessionBefore, orderBy, groupExpansion, setGroupExpanded, sessionOrderByAccount, sessionUpdatedAtByAccount, syncSessionOrderAccount, setSessionOrder, collapsedBranchesByAccount, setBranchCollapsed, setAllBranchesCollapsed, globalBranchToggle, filter = "all", selectionMode = false, selectedIds, onToggleSelect, t }) {
 			const list = useSessions((s) => s);
 			const current = list.current;
 			const [expandedSessionGroups, setExpandedSessionGroups] = (0, react.useState)([]);
-			const [activeId, setActiveId] = (0, react.useState)(current ?? null);
-			const [collapsedByAccount, setCollapsedByAccount] = (0, react.useState)(() => ({}));
-			const collapsedFor = (0, react.useCallback)((accountKey) => new Set(collapsedByAccount[accountKey] || []), [collapsedByAccount]);
+			const [collapsedByAccount, setCollapsedByAccount] = (0, react.useState)(() => {
+				try {
+					return JSON.parse(localStorage.getItem("dsh.branch-workspace.collapsed") || "{}") || {};
+				} catch {
+					return {};
+				}
+			});
+			(0, react.useEffect)(() => {
+				try {
+					localStorage.setItem("dsh.branch-workspace.collapsed", JSON.stringify(collapsedByAccount));
+				} catch {
+					// Ignore storage quota / privacy-mode failures.
+				}
+			}, [collapsedByAccount]);
+			const collapsedFor = (0, react.useCallback)((accountKey) => {
+				const base = new Set((collapsedBranchesByAccount || {})[accountKey] || []);
+				const local = collapsedByAccount[accountKey] || [];
+				for (const id of local) {
+					if (base.has(id)) base.delete(id);
+					else base.add(id);
+				}
+				return base;
+			}, [collapsedByAccount, collapsedBranchesByAccount]);
 			const autoExpandedCurrent = (0, react.useRef)(null);
 			const [drag, setDrag] = (0, react.useState)(null);
 			const sessionDropCommitted = (0, react.useRef)(false);
 			const [workspaceDrag, setWorkspaceDrag] = (0, react.useState)(null);
 			const workspaceDropCommitted = (0, react.useRef)(false);
-			const previousOrderBy = (0, react.useRef)(orderBy);
 			useNativeDragAcceptance(drag !== null || workspaceDrag !== null);
 			const currentGroup = current === void 0 ? void 0 : workspaces.find((w) => w.sessionIds.includes(current))?.workspaceId ?? "";
 			(0, react.useEffect)(() => {
@@ -1675,49 +1706,37 @@ return a.id < b.id ? -1 : 1;
 				const accounted = new Set(workspaces.flatMap((workspace) => workspace.sessionIds));
 				return list.ids.filter((id) => list.byId[id] !== void 0 && !accounted.has(id));
 			}, [list, workspaces]);
-			(0, react.useEffect)(() => {
-				if (list.phase !== "ready") return;
-				const switchedToUpdated = previousOrderBy.current !== "updated" && orderBy === "updated";
-				previousOrderBy.current = orderBy;
-				const accounts = [...workspaces.map((workspace) => ({
-					key: workspace.workspaceId,
-					sessionIds: workspace.sessionIds.filter((id) => list.byId[id] !== void 0)
-				})), {
-					key: "",
-					sessionIds: ungroupedSessionIds
-				}];
-				for (const { key, sessionIds } of accounts) {
-					const previousOrder = sessionOrderByAccount[key];
-					const next = nextSessionOrderAccount({
-						sessionIds,
-						previousOrder,
-						previousUpdatedAt: sessionUpdatedAtByAccount[key] ?? {},
-						list,
-						orderBy,
-						sortByRecency: orderBy === "updated" && (previousOrder === void 0 || switchedToUpdated)
+			const sortSessionIds = (sessionIds, accountKey) => {
+				const ids = sessionIds.filter((id) => list.byId[id] !== void 0);
+				if (orderBy === "default") return [...ids];
+				if (orderBy === "title") {
+					return [...ids].sort((a, b) => {
+						const aSession = list.byId[a];
+						const bSession = list.byId[b];
+						if (!aSession || !bSession) return 0;
+						return compareSessionTitle(aSession, bSession);
 					});
-					if (next.changed) syncSessionOrderAccount(key, next.order.map((id) => id), next.updatedAt);
 				}
-			}, [
-				list,
-				orderBy,
-				sessionOrderByAccount,
-				sessionUpdatedAtByAccount,
-				syncSessionOrderAccount,
-				ungroupedSessionIds,
-				workspaces
-			]);
+				if (orderBy === "running") {
+					return [...ids].sort((a, b) => {
+						const aSession = list.byId[a];
+						const bSession = list.byId[b];
+						if (!aSession || !bSession) return 0;
+						return compareSessionRunning(aSession, bSession);
+					});
+				}
+				if (orderBy === "updated") {
+					return [...ids].sort((a, b) => compareSessionRecency(a, b, list.byId));
+				}
+				return reconciledSessionOrder(ids, sessionOrderByAccount[accountKey]);
+			};
 			const orderedWorkspaces = (0, react.useMemo)(() => {
-				return workspaces.map((workspace) => {
-					const stored = sessionOrderByAccount[workspace.workspaceId];
-					const sessionIds = reconciledSessionOrder(workspace.sessionIds, stored);
-					return {
-						...workspace,
-						sessionIds
-					};
-				});
-			}, [sessionOrderByAccount, workspaces]);
-			const orderedUngroupedSessionIds = (0, react.useMemo)(() => reconciledSessionOrder(ungroupedSessionIds, sessionOrderByAccount[""]), [sessionOrderByAccount, ungroupedSessionIds]);
+				return workspaces.map((workspace) => ({
+					...workspace,
+					sessionIds: sortSessionIds(workspace.sessionIds, workspace.workspaceId)
+				}));
+			}, [sessionOrderByAccount, workspaces, orderBy, list]);
+			const orderedUngroupedSessionIds = (0, react.useMemo)(() => sortSessionIds(ungroupedSessionIds, ""), [sessionOrderByAccount, ungroupedSessionIds, orderBy, list]);
 			const groups = (0, react.useMemo)(() => deriveGroups(list, orderedWorkspaces, archivedSessionIds, {
 				expandedGroups,
 				filter,
@@ -1742,6 +1761,27 @@ return a.id < b.id ? -1 : 1;
 				}
 				return map;
 			}, [groups, collapsedFor]);
+			(0, react.useEffect)(() => {
+				if (!globalBranchToggle || globalBranchToggle.version === 0) return;
+				const collapsed = globalBranchToggle.collapsed;
+				setCollapsedByAccount((prev) => {
+					const next = { ...prev };
+					for (const group of groups) {
+						const branchIds = collectBranchIds(group.sessions);
+						const list = Array.isArray(next[group.key]) ? next[group.key].slice() : [];
+						for (const id of branchIds) {
+							const idx = list.indexOf(id);
+							if (collapsed) {
+								if (idx === -1) list.push(id);
+							} else if (idx !== -1) {
+								list.splice(idx, 1);
+							}
+						}
+						next[group.key] = list;
+					}
+					return next;
+				});
+			}, [globalBranchToggle && globalBranchToggle.version, groups]);
 			(0, react.useEffect)(() => {
 				if (current === void 0) return;
 				const group = groups.find((candidate) => candidate.sessions.some((session) => session.id === current));
@@ -1768,6 +1808,9 @@ return a.id < b.id ? -1 : 1;
 					const collapsed = collapsedFor(accountKey);
 					for (const ancestorId of ancestors) {
 						if (collapsed.has(ancestorId)) {
+							if (typeof setBranchCollapsed === "function") {
+								setBranchCollapsed(accountKey, ancestorId, false);
+							}
 							setCollapsedByAccount((prev) => {
 								const list = (prev[accountKey] || []).filter((x) => x !== ancestorId);
 								return { ...prev, [accountKey]: list };
@@ -1785,6 +1828,10 @@ return a.id < b.id ? -1 : 1;
 			const toggleCollapsedSession = (accountKey, id) => {
 				const collapsed = collapsedFor(accountKey);
 				const next = !collapsed.has(id);
+				if (typeof setBranchCollapsed === "function") {
+					setBranchCollapsed(accountKey, id, next);
+					return;
+				}
 				setCollapsedByAccount((prev) => {
 					const list = prev[accountKey] ? prev[accountKey].slice() : [];
 					const index = list.indexOf(id);
@@ -1812,62 +1859,6 @@ return a.id < b.id ? -1 : 1;
 				}
 				return rows;
 			}, [sessionTreeByGroup, expandedSessionGroups]);
-			(0, react.useEffect)(() => {
-				if (current !== void 0) setActiveId(current);
-			}, [current]);
-			(0, react.useEffect)(() => {
-				if (visibleRows.length === 0) return;
-				if (activeId === null || !visibleRows.some((row) => row.node.id === activeId)) {
-					setActiveId(visibleRows[0].node.id);
-				}
-			}, [activeId, visibleRows]);
-			const handleTreeKeyDown = (e, node) => {
-				const index = visibleRows.findIndex((row) => row.node.id === node.id);
-				if (index === -1) return;
-				const row = visibleRows[index];
-				const prevent = () => {
-					e.preventDefault();
-					e.stopPropagation();
-				};
-				if (e.key === "ArrowDown") {
-					if (index < visibleRows.length - 1) setActiveId(visibleRows[index + 1].node.id);
-					prevent();
-				} else if (e.key === "ArrowUp") {
-					if (index > 0) setActiveId(visibleRows[index - 1].node.id);
-					prevent();
-				} else if (e.key === "ArrowRight") {
-					const children = node.children || [];
-					if (children.length > 0) {
-						const collapsed = collapsedFor(row.accountKey).has(node.id);
-						if (collapsed) {
-							setBranchCollapsed(row.accountKey, node.id, false);
-						} else {
-							const firstChildRow = visibleRows.find((candidate) => candidate.node.id === children[0].id);
-							if (firstChildRow) setActiveId(firstChildRow.node.id);
-						}
-						prevent();
-					}
-				} else if (e.key === "ArrowLeft") {
-					const children = node.children || [];
-					const collapsed = collapsedFor(row.accountKey).has(node.id);
-					if (children.length > 0 && !collapsed) {
-						setBranchCollapsed(row.accountKey, node.id, true);
-					} else if (index > 0) {
-						const parentRow = visibleRows.slice(0, index).reverse().find((candidate) => candidate.depth < row.depth);
-						if (parentRow) setActiveId(parentRow.node.id);
-					}
-					prevent();
-				} else if (e.key === "Home") {
-					if (visibleRows.length > 0) setActiveId(visibleRows[0].node.id);
-					prevent();
-				} else if (e.key === "End") {
-					if (visibleRows.length > 0) setActiveId(visibleRows[visibleRows.length - 1].node.id);
-					prevent();
-				} else if (e.key === "Enter" || e.key === " ") {
-					open(node.id);
-					prevent();
-				}
-			};
 			const jumpSibling = (dir, id) => {
 				const row = visibleRows.find((candidate) => candidate.node.id === id);
 				if (!row || row.siblings.length < 2) return;
@@ -1876,7 +1867,6 @@ return a.id < b.id ? -1 : 1;
 				const length = row.siblings.length;
 				const target = dir === "prev" ? row.siblings[(index - 1 + length) % length] : row.siblings[(index + 1) % length];
 				if (target) {
-					setActiveId(target.id);
 					open(target.id);
 				}
 			};
@@ -2023,8 +2013,6 @@ return a.id < b.id ? -1 : 1;
 											path: tree?.pathByNode.get(node.id) || [],
 											siblings: tree?.siblingsByNode.get(node.id) || [],
 											onJumpSibling: jumpSibling,
-											tabIndex: activeId === node.id ? 0 : -1,
-											onKeyDown: handleTreeKeyDown,
 											selectionMode,
 											selected: selectedIds ? selectedIds.has(node.id) : false,
 											onToggleSelect,
@@ -2088,31 +2076,8 @@ return a.id < b.id ? -1 : 1;
 			const list = useSessions((s) => s);
 			const baseRows = (0, react.useMemo)(() => deriveFlat(list, archivedSessionIds, orderBy, filter), [list, archivedSessionIds, orderBy, filter]);
 			const sessionIds = (0, react.useMemo)(() => baseRows.map((row) => row.id), [baseRows]);
-			const previousOrderBy = (0, react.useRef)(orderBy);
-			(0, react.useEffect)(() => {
-				if (list.phase !== "ready") return;
-				const previousOrder = sessionOrderByAccount[FLAT_SESSION_ORDER_KEY];
-				const previousUpdatedAt = sessionUpdatedAtByAccount["__flat_session_order__"] ?? {};
-				const switchedToUpdated = previousOrderBy.current !== "updated" && orderBy === "updated";
-				previousOrderBy.current = orderBy;
-				const next = nextSessionOrderAccount({
-					sessionIds,
-					previousOrder,
-					previousUpdatedAt,
-					list,
-					orderBy,
-					sortByRecency: orderBy === "updated" && (previousOrder === void 0 || switchedToUpdated)
-				});
-				if (next.changed) syncSessionOrderAccount(FLAT_SESSION_ORDER_KEY, next.order.map((id) => id), next.updatedAt);
-			}, [
-				list,
-				orderBy,
-				sessionOrderByAccount,
-				sessionUpdatedAtByAccount,
-				sessionIds,
-				syncSessionOrderAccount
-			]);
 			const rows = (0, react.useMemo)(() => {
+				if (orderBy !== "manual") return baseRows;
 				const byId = new Map(baseRows.map((row) => [row.id, row]));
 				return reconciledSessionOrder(sessionIds, sessionOrderByAccount[FLAT_SESSION_ORDER_KEY]).flatMap((id) => {
 					const row = byId.get(id);
@@ -2121,6 +2086,7 @@ return a.id < b.id ? -1 : 1;
 			}, [
 				baseRows,
 				sessionOrderByAccount,
+				orderBy,
 				sessionIds
 			]);
 			const [drag, setDrag] = (0, react.useState)(null);
@@ -2279,7 +2245,14 @@ return a.id < b.id ? -1 : 1;
 			const sessionUpdatedAtByAccount = useStore((s) => s.sessionUpdatedAtByAccount);
 			const collapsedBranchesByAccount = useStore((s) => s.collapsedBranchesByAccount) || {};
 			const persistedFilter = useStore((s) => s.filter);
-			const [localFilter, setLocalFilter] = (0, react.useState)("all");
+			const [localFilter, setLocalFilter] = (0, react.useState)(() => {
+				try {
+					return localStorage.getItem("dsh.branch-workspace.filter") || "all";
+				} catch {
+					return "all";
+				}
+			});
+			const [globalBranchToggle, setGlobalBranchToggle] = (0, react.useState)({ version: 0, collapsed: false });
 			const filter = persistedFilter ?? localFilter;
 			const allWorkspaceKeys = (0, react.useMemo)(() => ["", ...workspaces.map((workspace) => workspace.workspaceId)], [workspaces]);
 			const allGroupsExpanded = allWorkspaceKeys.length > 0 && allWorkspaceKeys.every((key) => groupExpansion[key] === true);
@@ -2295,12 +2268,13 @@ return a.id < b.id ? -1 : 1;
 				map.set("", collectBranchIds(ungroupedSessions));
 				return map;
 			}, [list, workspaces]);
-			const allBranchesCollapsed = allWorkspaceKeys.length > 0 && allWorkspaceKeys.every((key) => {
+			const storeAllBranchesCollapsed = allWorkspaceKeys.length > 0 && allWorkspaceKeys.every((key) => {
 				const ids = branchIdsByAccount.get(key) || [];
 				if (ids.length === 0) return true;
 				const collapsed = new Set(collapsedBranchesByAccount[key] || []);
 				return ids.every((id) => collapsed.has(id));
 			});
+			const allBranchesCollapsed = globalBranchToggle.version > 0 ? globalBranchToggle.collapsed : storeAllBranchesCollapsed;
 			(0, react.useEffect)(() => {
 				if (workspacePhase !== "ready") return;
 				actions.retainAccountKeys([
@@ -2403,12 +2377,6 @@ return a.id < b.id ? -1 : 1;
 							setSearchExpanded(true);
 							window.setTimeout(() => searchInput.current?.focus({ preventScroll: true }), 0);
 						}
-					} else if (!typing && (event.ctrlKey || event.metaKey) && event.shiftKey && event.key.toLowerCase() === "e") {
-						event.preventDefault();
-						for (const key of allWorkspaceKeys) actions.setGroupExpanded(key, true);
-					} else if (!typing && (event.ctrlKey || event.metaKey) && event.shiftKey && event.key.toLowerCase() === "c") {
-						event.preventDefault();
-						for (const key of allWorkspaceKeys) actions.setGroupExpanded(key, false);
 					}
 				};
 				document.addEventListener("keydown", onKeyDown);
@@ -2417,8 +2385,6 @@ return a.id < b.id ? -1 : 1;
 				};
 			}, [
 				wide,
-				allWorkspaceKeys,
-				actions,
 				expandSidebar
 			]);
 			(0, react.useEffect)(() => {
@@ -2619,7 +2585,7 @@ return a.id < b.id ? -1 : 1;
 									]
 								})
 							}),
-								directoryFlowAvailable && wide && (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Tooltip, {
+								directoryFlowAvailable && (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Tooltip, {
 								label: t("workspace.add"),
 								side: "bottom",
 								delayMs: 500,
@@ -2663,6 +2629,9 @@ return a.id < b.id ? -1 : 1;
 											filter,
 											onPickFilter: (id) => {
 												setLocalFilter(id);
+												try {
+													localStorage.setItem("dsh.branch-workspace.filter", id);
+												} catch {}
 												if (typeof actions.setFilter === "function") actions.setFilter(id);
 											},
 											onBatchSelect: () => setSelectionMode(true),
@@ -2676,6 +2645,7 @@ return a.id < b.id ? -1 : 1;
 											allBranchesCollapsed,
 											onToggleAllBranches: () => {
 												const next = !allBranchesCollapsed;
+												setGlobalBranchToggle((v) => ({ version: v.version + 1, collapsed: next }));
 												if (typeof actions.setAllBranchesCollapsed === "function") {
 													for (const key of allWorkspaceKeys) {
 														actions.setAllBranchesCollapsed(key, branchIdsByAccount.get(key) || [], next);
@@ -2788,6 +2758,7 @@ return a.id < b.id ? -1 : 1;
 							collapsedBranchesByAccount,
 							setBranchCollapsed: actions.setBranchCollapsed,
 							setAllBranchesCollapsed: actions.setAllBranchesCollapsed,
+							globalBranchToggle,
 							filter,
 							selectionMode,
 							selectedIds,
