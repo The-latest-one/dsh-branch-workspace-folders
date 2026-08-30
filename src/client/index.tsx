@@ -50,7 +50,21 @@ export function apply(ctx: ClientContext): void {
         if (!params) return template
         return template.replace(/\{(\w+)\}/g, (_: string, name: string) => (name in params ? String(params[name]) : ''))
       })
-  const ArchivedSection = (props: any) => <ArchivedSettingsSection {...props} t={t} />
+  const sessions = ctx.get('sessions')
+  const workspaces = ctx.get('workspaces')
+  const refreshSidebar = async () => {
+    try {
+      await sessions?.refresh?.()
+    } catch {
+      // best-effort; the next host/workspace sync will also converge
+    }
+    try {
+      await workspaces?.refresh?.()
+    } catch {
+      // best-effort; the next host/workspace sync will also converge
+    }
+  }
+  const ArchivedSection = (props: any) => <ArchivedSettingsSection {...props} t={t} onMutated={refreshSidebar} />
   slots.inject('settings.section', () => slots.register({
     name: 'settings.section',
     id: 'branch-workspace-archives',

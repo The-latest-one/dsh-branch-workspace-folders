@@ -82,6 +82,7 @@ function uiLabel(t: ((key: string, params?: any) => string) | undefined, zhKey: 
 
 export function ArchivedSettingsSection(props: any): any {
   const t = props?.t
+  const onMutated = props?.onMutated
   const label = (key: string, params?: any) => {
     if (typeof t === 'function') return t(key, params) ?? key
     const dict = /^zh/i.test(typeof navigator !== 'undefined' ? navigator.language : '') ? zh : en
@@ -179,6 +180,16 @@ export function ArchivedSettingsSection(props: any): any {
       if (!json || json.ok !== true) throw new Error(json?.error || label('workError'))
       setNotice(successText)
       setConfirm(null)
+      // The sidebar keeps its own sessions/workspaces client stores. After
+      // restore/purge, refresh those stores so a deleted session does not
+      // linger as a stale "Ungrouped" partition until a full browser reload.
+      if (typeof onMutated === 'function') {
+        try {
+          await onMutated()
+        } catch (refreshError) {
+          console.error('[dsh-branch-workspace-folders] sidebar refresh after archive mutation failed', refreshError)
+        }
+      }
       await load()
     } catch (e: any) {
       setError(e?.message || String(e))
