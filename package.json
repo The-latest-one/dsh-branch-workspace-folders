@@ -1,6 +1,6 @@
 {
   "name": "dsh-branch-workspace-folders",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "DSH Web sidebar plugin: group forked sessions under their root session in the left workspace area.",
   "private": false,
   "type": "module",
@@ -26,7 +26,9 @@
     "pack": "npm pack",
     "test": "node --experimental-strip-types --test tests/*.test.mjs",
     "pretest": "npm run build",
-    "install:dsh": "bash scripts/install-readonly.sh"
+    "install:dsh": "bash scripts/install-readonly.sh",
+    "prepack": "npm run build",
+    "prepublishOnly": "npm run build"
   },
   "dependencies": {},
   "devDependencies": {
@@ -45,7 +47,8 @@
     "react": ">=18 <20",
     "react-dom": ">=18 <20",
     "@deepseek-ai/dsh-session": ">=0.1.0-rc.1",
-    "@deepseek-ai/dsh-client-ui-sidebar": ">=0.0.1-rc.1"
+    "@deepseek-ai/dsh-client-ui-sidebar": ">=0.0.1-rc.1",
+    "@deepseek-ai/dsh-client-ui-primitives": ">=0.0.1-rc.1"
   },
   "exports": {
     ".": {

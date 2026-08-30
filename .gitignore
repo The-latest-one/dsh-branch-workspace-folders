@@ -12,3 +12,6 @@ node_modules
 # Local env / secrets
 .env
 *.local
+
+# Build output
+/lib

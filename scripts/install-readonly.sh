@@ -97,12 +97,10 @@ fi
 if [ "$install_ok" -ne 1 ]; then
   echo "[install-dsh] pnpm full-profile install is blocked (often by unrelated GitHub dependencies without network)."
   echo "[install-dsh] Falling back to direct plugin file sync into existing node_modules..."
+  sync_plugin_files
+else
+  echo "[install-dsh] pnpm install succeeded; keeping node_modules managed by pnpm."
 fi
-
-# Always sync plugin files so a same-version tarball update is applied even when
-# pnpm considers the package "already up to date".
-echo "[install-dsh] Syncing plugin files into node_modules..."
-sync_plugin_files
 
 echo "[install-dsh] Restarting DSH web..."
 # Match both `node /usr/local/bin/dsh web` and `dsh web` processes.

@@ -804,8 +804,9 @@ if (onKeyDown) onKeyDown(e, node);
 return (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.HoverCard, {
 anchor: (0, react_jsx_runtime.jsxs)("div", {
 className: clsx(Rows_module_css_default.sessionRow, rowSelected && Rows_module_css_default.selected, menuOpen && Rows_module_css_default.menuOpen, flat && !showStatus && Rows_module_css_default.flatSessionRowWithoutStatus, drag?.marker === "before" && Rows_module_css_default.dropBefore, drag?.marker === "after" && Rows_module_css_default.dropAfter),
-...(depth > 0 ? { style: { paddingLeft: 8 + depth * 14 }, "aria-level": depth + 1 } : {}),
+...(depth > 0 ? { style: { paddingLeft: `calc(var(--dsh-sidebar-inline-padding, 8px) + ${depth * 16}px)` } } : {}),
 role: "treeitem",
+"aria-level": depth + 1,
 "aria-selected": rowSelected,
 ...(node.children !== void 0 && node.children.length > 0 ? { "aria-expanded": !collapsed } : {}),
 tabIndex,
@@ -892,7 +893,7 @@ cursor: "help"
 title: node.orphan ? uiLabel("缺失父节点", "Orphan session") : uiLabel("检测到环", "Cycle detected"),
 children: node.orphan ? "⚠" : "↻"
 }),
-depth === 0 && node.children !== void 0 && node.children.length > 0 && (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Menu, {
+node.children !== void 0 && node.children.length > 0 && (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Menu, {
 open: branchMenuOpen,
 onClose: () => {
 setBranchMenuOpen(false);
@@ -1542,12 +1543,26 @@ return a.id < b.id ? -1 : 1;
 					parent.children.push(node);
 				}
 			}
-			if (roots.length === 0 && sessions.length > 0) {
-				for (const node of sessions) {
-					node.cycle = true;
-					node.children = [];
+			// Mark every node that is not reachable from a known root as a
+			// cycle/isolated subgraph and promote each such component to a root.
+			// This matches the host-side safety net (src/index.ts buildClusters)
+			// so malformed cycles are still visible in the sidebar instead of
+			// silently disappearing when another valid root exists.
+			const reachable = new Set();
+			const visit = (node) => {
+				if (reachable.has(node.id)) return;
+				reachable.add(node.id);
+				for (const child of node.children ?? []) visit(child);
+			};
+			for (const root of roots) visit(root);
+			for (const node of sessions) {
+				if (!reachable.has(node.id)) node.cycle = true;
+			}
+			for (const node of sessions) {
+				if (!reachable.has(node.id)) {
+					roots.push(node);
+					visit(node);
 				}
-				return sessions.slice();
 			}
 			return roots;
 		}
@@ -1636,13 +1651,9 @@ return a.id < b.id ? -1 : 1;
 			const current = list.current;
 			const [expandedSessionGroups, setExpandedSessionGroups] = (0, react.useState)([]);
 			const [activeId, setActiveId] = (0, react.useState)(current ?? null);
-			const [localCollapsedSessionIds, setLocalCollapsedSessionIds] = (0, react.useState)(() => new Set());
-			const storeCollapsed = collapsedBranchesByAccount || {};
-			const collapsedFor = (accountKey) => {
-				const set = new Set(storeCollapsed[accountKey] || []);
-				for (const id of localCollapsedSessionIds) set.add(id);
-				return set;
-			};
+			const [collapsedByAccount, setCollapsedByAccount] = (0, react.useState)(() => ({}));
+			const collapsedFor = (0, react.useCallback)((accountKey) => new Set(collapsedByAccount[accountKey] || []), [collapsedByAccount]);
+			const autoExpandedCurrent = (0, react.useRef)(null);
 			const [drag, setDrag] = (0, react.useState)(null);
 			const sessionDropCommitted = (0, react.useRef)(false);
 			const [workspaceDrag, setWorkspaceDrag] = (0, react.useState)(null);
@@ -1748,22 +1759,23 @@ return a.id < b.id ? -1 : 1;
 				sessionTreeByGroup
 			]);
 			(0, react.useEffect)(() => {
-				if (current === void 0) return;
+				if (current === void 0 || autoExpandedCurrent.current === current) return;
+				let found = false;
 				for (const [accountKey, tree] of sessionTreeByGroup) {
 					const ancestors = findSessionAncestors(tree.sessionTree, current);
 					if (ancestors === null) continue;
+					found = true;
 					const collapsed = collapsedFor(accountKey);
 					for (const ancestorId of ancestors) {
 						if (collapsed.has(ancestorId)) {
-							setLocalCollapsedSessionIds((prev) => {
-								const next = new Set(prev);
-								next.delete(ancestorId);
-								return next;
+							setCollapsedByAccount((prev) => {
+								const list = (prev[accountKey] || []).filter((x) => x !== ancestorId);
+								return { ...prev, [accountKey]: list };
 							});
-							if (typeof setBranchCollapsed === "function") setBranchCollapsed(accountKey, ancestorId, false);
 						}
 					}
 				}
+				if (found) autoExpandedCurrent.current = current;
 			}, [
 				current,
 				sessionTreeByGroup,
@@ -1773,13 +1785,16 @@ return a.id < b.id ? -1 : 1;
 			const toggleCollapsedSession = (accountKey, id) => {
 				const collapsed = collapsedFor(accountKey);
 				const next = !collapsed.has(id);
-				setLocalCollapsedSessionIds((prev) => {
-					const updated = new Set(prev);
-					if (next) updated.add(id);
-					else updated.delete(id);
-					return updated;
+				setCollapsedByAccount((prev) => {
+					const list = prev[accountKey] ? prev[accountKey].slice() : [];
+					const index = list.indexOf(id);
+					if (next) {
+						if (index === -1) list.push(id);
+					} else if (index !== -1) {
+						list.splice(index, 1);
+					}
+					return { ...prev, [accountKey]: list };
 				});
-				if (typeof setBranchCollapsed === "function") setBranchCollapsed(accountKey, id, next);
 			};
 			const visibleRows = (0, react.useMemo)(() => {
 				const rows = [];

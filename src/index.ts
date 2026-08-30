@@ -40,7 +40,7 @@ interface AppContext {
 }
 
 function isLoopback(remote: string): boolean {
-  return remote === '127.0.0.1' || remote === '::1' || remote === '::ffff:127.0.0.1'
+  return remote.startsWith('127.') || remote === '::1' || remote === '::ffff:127.0.0.1'
 }
 
 function expandHome(p: string): string {
@@ -70,48 +70,49 @@ interface SessionLocation {
   header: any
 }
 
+interface SessionFileRef {
+  sessionId: string
+  workspace: string
+  file: string
+}
+
 const SESSIONS_CACHE_TTL_MS = 2000
-let sessionsCache: { root: string; at: number; mtimeMs: number; locations: SessionLocation[] } | null = null
+let sessionsCache: { root: string; at: number; mtimeMs: number; signature: string; locations: SessionLocation[] } | null = null
 let persistenceCache: { at: number; locations: SessionLocation[] } | null = null
 interface ClustersCache {
   at: number
   root: string
   rootMtimeMs: number
+  signature: string
   clusters: BranchClusterDTO[]
 }
 const CLUSTERS_CACHE_TTL_MS = 5000
 const MAX_CONCURRENT_PARSES = 4
 let clustersCache: ClustersCache | null = null
 
-function discoverSessionsCached(root: string): SessionLocation[] {
-  let mtimeMs = 0
-  try {
-    mtimeMs = statSync(root).mtimeMs
-  } catch {
-    // ignore
+/** Cheap filesystem fingerprint: directory entries + per-file mtime, no header IO. */
+function sessionFilesSignature(files: SessionFileRef[]): string {
+  let maxMtimeMs = 0
+  for (const ref of files) {
+    try {
+      const st = statSync(ref.file)
+      if (st.mtimeMs > maxMtimeMs) maxMtimeMs = st.mtimeMs
+    } catch {
+      // ignore unreadable files
+    }
   }
-  const now = Date.now()
-  if (
-    sessionsCache &&
-    sessionsCache.root === root &&
-    sessionsCache.mtimeMs === mtimeMs &&
-    now - sessionsCache.at < SESSIONS_CACHE_TTL_MS
-  ) {
-    return sessionsCache.locations
-  }
-  const locations = discoverSessions(root)
-  sessionsCache = { root, at: now, mtimeMs, locations }
-  return locations
+  return `${files.length}:${maxMtimeMs}`
 }
 
-function discoverSessions(root: string): SessionLocation[] {
-  const locations: SessionLocation[] = []
-  if (!existsSync(root)) return locations
+/** List session log paths without reading any session header. */
+function listSessionFiles(root: string): SessionFileRef[] {
+  const files: SessionFileRef[] = []
+  if (!existsSync(root)) return files
   let workspaces: string[] = []
   try {
     workspaces = readdirSync(root)
   } catch {
-    return locations
+    return files
   }
   for (const workspace of workspaces) {
     const workspaceDir = join(root, workspace)
@@ -124,19 +125,55 @@ function discoverSessions(root: string): SessionLocation[] {
     for (const sessionId of entries) {
       const file = join(workspaceDir, sessionId, 'session.jsonl.zstd')
       if (!existsSync(file)) continue
-      try {
-        const header = readSessionHeader(file)
-        locations.push({
-          sessionId: String(header.id ?? sessionId),
-          workspace,
-          file,
-          header,
-        })
-      } catch {
-        // ignore corrupt/unreadable logs
-      }
+      files.push({ sessionId, workspace, file })
     }
   }
+  return files
+}
+
+function discoverSessionsFromFiles(files: SessionFileRef[]): SessionLocation[] {
+  const locations: SessionLocation[] = []
+  for (const ref of files) {
+    try {
+      const header = readSessionHeader(ref.file)
+      locations.push({
+        sessionId: String(header.id ?? ref.sessionId),
+        workspace: ref.workspace,
+        file: ref.file,
+        header,
+      })
+    } catch {
+      // ignore corrupt/unreadable logs
+    }
+  }
+  return locations
+}
+
+function discoverSessions(root: string): SessionLocation[] {
+  return discoverSessionsFromFiles(listSessionFiles(root))
+}
+
+function discoverSessionsCached(root: string): SessionLocation[] {
+  let mtimeMs = 0
+  try {
+    mtimeMs = statSync(root).mtimeMs
+  } catch {
+    // ignore
+  }
+  const files = listSessionFiles(root)
+  const signature = sessionFilesSignature(files)
+  const now = Date.now()
+  if (
+    sessionsCache &&
+    sessionsCache.root === root &&
+    sessionsCache.mtimeMs === mtimeMs &&
+    sessionsCache.signature === signature &&
+    now - sessionsCache.at < SESSIONS_CACHE_TTL_MS
+  ) {
+    return sessionsCache.locations
+  }
+  const locations = discoverSessionsFromFiles(files)
+  sessionsCache = { root, at: now, mtimeMs, signature, locations }
   return locations
 }
 
@@ -252,8 +289,9 @@ export function buildClusters(parsed: ParsedSession[]): BranchClusterDTO[] {
     const sessions: ClusterSessionDTO[] = []
     const queue = [root.sessionId]
     const localSeen = new Set<string>()
-    while (queue.length) {
-      const id = queue.shift()!
+    let qi = 0
+    while (qi < queue.length) {
+      const id = queue[qi++]!
       if (localSeen.has(id)) continue
       localSeen.add(id)
       seen.add(id)
@@ -277,8 +315,9 @@ export function buildClusters(parsed: ParsedSession[]): BranchClusterDTO[] {
     const sessions: ClusterSessionDTO[] = []
     const queue = [s.sessionId]
     const localSeen = new Set<string>()
-    while (queue.length) {
-      const id = queue.shift()!
+    let qi = 0
+    while (qi < queue.length) {
+      const id = queue[qi++]!
       if (localSeen.has(id)) continue
       localSeen.add(id)
       seen.add(id)
@@ -396,10 +435,15 @@ export function apply(ctx: AppContext): (() => void) | void {
             } catch {
               // ignore; fall through to TTL-only cache
             }
+            // Fast path: build a cheap filesystem fingerprint (readdir + stat only)
+            // before doing the expensive discover/read-header/parse pass.
+            const files = listSessionFiles(root)
+            const signature = sessionFilesSignature(files)
             if (
               clustersCache &&
               clustersCache.root === root &&
               clustersCache.rootMtimeMs === rootMtimeMs &&
+              clustersCache.signature === signature &&
               now - clustersCache.at < CLUSTERS_CACHE_TTL_MS
             ) {
               const cachedClusters = filterClustersByCwd(clustersCache.clusters, url.searchParams.get('cwd')?.trim())
@@ -412,7 +456,7 @@ export function apply(ctx: AppContext): (() => void) | void {
             // This keeps cross-workspace branch children attached to their real root
             // instead of turning them into isolated roots.
             const fullClusters = buildClusters(parsed)
-            clustersCache = { at: now, root, rootMtimeMs, clusters: fullClusters }
+            clustersCache = { at: now, root, rootMtimeMs, signature, clusters: fullClusters }
             const cwd = url.searchParams.get('cwd')?.trim()
             const clusters = filterClustersByCwd(fullClusters, cwd)
             sendJson(res, 200, { ok: true, data: { clusters } })
