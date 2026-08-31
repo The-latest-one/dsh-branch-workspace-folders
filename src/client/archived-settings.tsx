@@ -3,6 +3,8 @@ import {
   Button,
   IconArchiveOutline20,
   IconBranchOutline16,
+  IconChevronDownOutline14,
+  IconChevronRightOutline14,
   IconRefreshOutline16,
   IconTrashOutline16,
   Modal,
@@ -41,6 +43,11 @@ const zh: Record<string, string> = {
   deleted: '已永久删除 {n} 个会话。',
   restored: '已恢复该会话。',
   workError: '操作失败',
+  expandAll: '全部展开',
+  collapseAll: '全部折叠',
+  expandBranch: '展开分支',
+  collapseBranch: '折叠分支',
+  showMore: '显示更多',
 }
 
 const en: Record<string, string> = {
@@ -62,11 +69,18 @@ const en: Record<string, string> = {
   deleted: 'Permanently deleted {n} sessions.',
   restored: 'Session restored.',
   workError: 'Operation failed',
+  expandAll: 'Expand all',
+  collapseAll: 'Collapse all',
+  expandBranch: 'Expand branch',
+  collapseBranch: 'Collapse branch',
+  showMore: 'Show more',
 }
 
 const dictionaries: Record<string, Record<string, string>> = { zh, en }
 
 const NS = 'branch-workspace-archives'
+const ARCHIVED_STYLE_ID = 'dsh-branch-workspace-folders-archives-css'
+let archivedStyleCount = 0
 
 function formatTime(value: number | undefined): string {
   if (!value) return ''
@@ -97,6 +111,9 @@ export function ArchivedSettingsSection(props: any): any {
   const [busyId, setBusyId] = useState<string | null>(null)
   const [confirm, setConfirm] = useState<ArchivedSessionDTO | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
+  const [collapsedIds, setCollapsedIds] = useState<Set<string>>(new Set())
+  const [defaultsApplied, setDefaultsApplied] = useState(false)
+  const [visibleLimit, setVisibleLimit] = useState(50)
 
   const load = async () => {
     setLoading(true)
@@ -119,13 +136,14 @@ export function ArchivedSettingsSection(props: any): any {
   }, [])
 
   useEffect(() => {
-    const id = 'dsh-branch-workspace-folders-archives-css'
-    if (typeof document !== 'undefined' && !document.getElementById(id)) {
+    if (typeof document === 'undefined') return
+    archivedStyleCount += 1
+    if (archivedStyleCount === 1) {
       const style = document.createElement('style')
-      style.id = id
+      style.id = ARCHIVED_STYLE_ID
       style.textContent = `
 .bwf-archive-settings{display:flex;flex-direction:column;gap:12px;color:var(--dsw-alias-label-primary)}
-.bwf-archive-header{display:flex;align-items:center;gap:12px}
+.bwf-archive-header{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
 .bwf-archive-header h2{margin:0;font-size:16px;line-height:24px;font-weight:600}
 .bwf-archive-empty{color:var(--dsw-alias-label-secondary);padding:12px 0}
 .bwf-archive-error{color:var(--dsw-alias-danger-fill, #d92d20);padding:8px 0}
@@ -137,12 +155,17 @@ export function ArchivedSettingsSection(props: any): any {
 .bwf-archive-badge{display:inline-flex;align-items:center;gap:2px;color:var(--dsw-alias-label-tertiary);font-size:12px;white-space:nowrap}
 .bwf-archive-time{color:var(--dsw-alias-label-tertiary);font-size:12px;white-space:nowrap}
 .bwf-archive-actions{display:inline-flex;align-items:center;gap:4px;opacity:.85}
+.bwf-archive-toggle{display:inline-flex;align-items:center;justify-content:center;flex:none;width:20px;height:20px;padding:0;border:none;background:none;color:var(--dsw-alias-label-tertiary);cursor:pointer;border-radius:6px}
+.bwf-archive-show-more{width:100%;margin-top:4px}
 `
       document.head.appendChild(style)
     }
     return () => {
-      const el = typeof document !== 'undefined' ? document.getElementById(id) : null
-      el?.remove()
+      archivedStyleCount -= 1
+      if (archivedStyleCount === 0) {
+        const el = document.getElementById(ARCHIVED_STYLE_ID)
+        el?.remove()
+      }
     }
   }, [])
 
@@ -163,8 +186,40 @@ export function ArchivedSettingsSection(props: any): any {
     const nodes = treeNodes.map((n) => ({ ...n, children: [] as any[] }))
     return buildSessionTree(nodes)
   }, [treeNodes])
-  const rows = useMemo(() => flattenSessionTree(roots), [roots])
+
+  useEffect(() => {
+    if (defaultsApplied || roots.length === 0) return
+    const initial = new Set<string>()
+    for (const root of roots) {
+      if (root.children && root.children.length > 0) initial.add(root.id)
+    }
+    setCollapsedIds(initial)
+    setDefaultsApplied(true)
+  }, [roots, defaultsApplied])
+
+  const rows = useMemo(() => flattenSessionTree(roots, 0, [], new Set(), collapsedIds), [roots, collapsedIds])
+  const visibleRows = useMemo(() => rows.slice(0, visibleLimit), [rows, visibleLimit])
   const byId = useMemo(() => new Map(sessions.map((s) => [s.sessionId, s])), [sessions])
+
+  const branchRoots = useMemo(() => roots.filter((root: any) => root.children && root.children.length > 0), [roots])
+  const allCollapsed = branchRoots.length > 0 && branchRoots.every((root: any) => collapsedIds.has(root.id))
+  const toggleCollapsed = (id: string) => {
+    setCollapsedIds((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
+  const expandAll = () => {
+    setCollapsedIds(new Set())
+    setVisibleLimit((limit) => Math.max(limit, rows.length))
+  }
+  const collapseAll = () => {
+    setCollapsedIds(new Set(branchRoots.map((root: any) => root.id)))
+    setVisibleLimit(50)
+  }
+  const showMore = () => setVisibleLimit((limit) => limit + 50)
 
   const runAction = async (sessionId: string, path: string, successText: string) => {
     setBusyId(sessionId)
@@ -222,63 +277,91 @@ export function ArchivedSettingsSection(props: any): any {
         <Button size="sm" variant="ghost" icon={<IconRefreshOutline16 />} onClick={load} disabled={loading}>
           {label('refresh')}
         </Button>
+        {branchRoots.length > 0 ? (
+          <Button size="sm" variant="ghost" onClick={allCollapsed ? expandAll : collapseAll}>
+            {allCollapsed ? label('expandAll') : label('collapseAll')}
+          </Button>
+        ) : null}
       </div>
       {error ? <p className="bwf-archive-error" role="alert">{error}</p> : null}
       {notice ? <p className="bwf-archive-notice" role="status">{notice}</p> : null}
       {!loading && sessions.length === 0 ? <p className="bwf-archive-empty">{label('empty')}</p> : null}
       {rows.length > 0 ? (
-        <ul className="bwf-archive-list" role="tree" aria-label={label('title')}>
-          {rows.map(({ node, depth }: { node: any; depth: number }) => {
-            const dto = byId.get(node.id)
-            const descendantCount = dto?.descendantCount ?? 0
-            return (
-              <li
-                key={node.id}
-                role="treeitem"
-                aria-level={depth + 1}
-                aria-selected={false}
-                aria-expanded={node.children?.length ? true : undefined}
-                className="bwf-archive-row"
-                style={{ paddingLeft: 8 + depth * 20 }}
-              >
-                {depth > 0 ? <span style={{ color: 'var(--dsw-alias-label-tertiary)' }}>└ </span> : null}
-                <span className="bwf-archive-title" title={node.title}>
-                  {node.title || node.id}
-                </span>
-                {descendantCount > 0 ? (
-                  <span className="bwf-archive-badge" aria-label={`${descendantCount} ${label('branch')}`}>
-                    <IconBranchOutline16 size={11} />
-                    {descendantCount}
+        <>
+          <ul className="bwf-archive-list" role="tree" aria-label={label('title')}>
+            {visibleRows.map(({ node, depth }: { node: any; depth: number }) => {
+              const dto = byId.get(node.id)
+              const descendantCount = dto?.descendantCount ?? 0
+              const collapsed = collapsedIds.has(node.id)
+              const expandable = !!node.children && node.children.length > 0
+              return (
+                <li
+                  key={node.id}
+                  role="treeitem"
+                  aria-level={depth + 1}
+                  aria-selected={false}
+                  aria-expanded={expandable ? !collapsed : undefined}
+                  className="bwf-archive-row"
+                  style={{ paddingLeft: 8 + depth * 20 }}
+                >
+                  {expandable ? (
+                    <button
+                      type="button"
+                      className="bwf-archive-toggle"
+                      aria-label={collapsed ? label('expandBranch') : label('collapseBranch')}
+                      aria-expanded={!collapsed}
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        toggleCollapsed(node.id)
+                      }}
+                    >
+                      {collapsed ? <IconChevronRightOutline14 /> : <IconChevronDownOutline14 />}
+                    </button>
+                  ) : depth > 0 ? <span style={{ width: 20, flex: 'none' }} /> : null}
+                  {depth > 0 && !expandable ? <span style={{ color: 'var(--dsw-alias-label-tertiary)' }}>└ </span> : null}
+                  <span className="bwf-archive-title" title={node.title}>
+                    {node.title || node.id}
                   </span>
-                ) : null}
-                {node.running ? <span aria-label="running" style={{ color: 'var(--dsw-alias-success-fill, #12b76a)' }}>●</span> : null}
-                <span className="bwf-archive-time">{formatTime(node.updatedAt)}</span>
-                <span className="bwf-archive-actions">
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    icon={<IconRefreshOutline16 />}
-                    disabled={busyId === node.id}
-                    onClick={() => restore(node.id)}
-                  >
-                    {busyId === node.id ? label('restoring') : label('restore')}
-                  </Button>
-                  {dto && !dto.parentKnown ? (
+                  {descendantCount > 0 ? (
+                    <span className="bwf-archive-badge" aria-label={`${descendantCount} ${label('branch')}`}>
+                      <IconBranchOutline16 size={11} />
+                      {descendantCount}
+                    </span>
+                  ) : null}
+                  {node.running ? <span aria-label="running" style={{ color: 'var(--dsw-alias-success-fill, #12b76a)' }}>●</span> : null}
+                  <span className="bwf-archive-time">{formatTime(node.updatedAt)}</span>
+                  <span className="bwf-archive-actions">
                     <Button
                       size="sm"
-                      variant="outline"
-                      icon={<IconTrashOutline16 />}
+                      variant="ghost"
+                      icon={<IconRefreshOutline16 />}
                       disabled={busyId === node.id}
-                      onClick={() => setConfirm(dto)}
+                      onClick={() => restore(node.id)}
                     >
-                      {label('purge')}
+                      {busyId === node.id ? label('restoring') : label('restore')}
                     </Button>
-                  ) : null}
-                </span>
-              </li>
-            )
-          })}
-        </ul>
+                    {dto && !dto.parentKnown ? (
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        icon={<IconTrashOutline16 />}
+                        disabled={busyId === node.id}
+                        onClick={() => setConfirm(dto)}
+                      >
+                        {label('purge')}
+                      </Button>
+                    ) : null}
+                  </span>
+                </li>
+              )
+            })}
+          </ul>
+          {rows.length > visibleLimit ? (
+            <Button className="bwf-archive-show-more" variant="ghost" onClick={showMore}>
+              {label('showMore')} ({rows.length - visibleLimit})
+            </Button>
+          ) : null}
+        </>
       ) : null}
 
       <Modal

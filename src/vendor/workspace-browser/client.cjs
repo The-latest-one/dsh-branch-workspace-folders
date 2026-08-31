@@ -534,7 +534,7 @@ function deriveFlat(list, archivedSessionIds, orderBy = "updated", filter = "all
 		* @param props.t - the browser root's locale seat.
 		* @returns the row element.
 		*/
-		function ProjectRowItem({ group, onToggle, onCreate, actions, drag, t }) {
+		function ProjectRowItem({ group, onToggle, onCreate, actions, drag, t, containsCurrent = false }) {
 			const row = group;
 			const label = row.workspaceId === void 0 ? t("group.ungrouped") : row.label;
 			const active = group.expanded && group.containsCurrent;
@@ -581,6 +581,30 @@ function deriveFlat(list, archivedSessionIds, orderBy = "updated", filter = "all
 							className: Rows_module_css_default.title,
 							children: label
 						})
+					}),
+					containsCurrent && !row.expanded && (0, react_jsx_runtime.jsx)("span", {
+						"data-current-workspace": "true",
+						role: "status",
+						style: {
+							display: "inline-flex",
+							alignItems: "center",
+							flex: "0 1 auto",
+							marginLeft: 6,
+							padding: "0 6px",
+							height: 18,
+							borderRadius: 999,
+							fontSize: 11,
+							lineHeight: 1,
+							fontWeight: 500,
+							whiteSpace: "nowrap",
+							maxWidth: 160,
+							overflow: "hidden",
+							textOverflow: "ellipsis",
+							color: "var(--dsw-alias-state-business-primary)",
+							background: "color-mix(in srgb, var(--dsw-alias-state-business-primary) 12%, transparent)",
+							border: "1px solid color-mix(in srgb, var(--dsw-alias-state-business-primary) 35%, transparent)"
+						},
+						children: uiLabel("当前会话在此工作区", "Current session in this workspace")
 					}),
 					(0, react_jsx_runtime.jsxs)("span", {
 						className: Rows_module_css_default.rowActions,
@@ -854,7 +878,7 @@ function deriveFlat(list, archivedSessionIds, orderBy = "updated", filter = "all
 		* @param props.t - the browser root's locale seat.
 		* @returns the session row.
 		*/
-		function SessionNodeItem({ node, currentId, now, onOpen, onRename, onFork, onArchive, drag, flat = false, t, depth = 0, collapsed = false, onToggleCollapse, path = [], siblings = [], onJumpSibling, onContextMenu, selectionMode = false, selected = false, onToggleSelect, muted = false }) {
+		function SessionNodeItem({ node, currentId, now, onOpen, onRename, onFork, onArchive, drag, flat = false, t, depth = 0, collapsed = false, onToggleCollapse, path = [], siblings = [], onJumpSibling, onContextMenu, selectionMode = false, selected = false, onToggleSelect, muted = false, currentRoot = false, currentDescendantTitle }) {
 const row = node;
 const title = displayTitle(node, t);
 const rowSelected = node.id === currentId;
@@ -980,6 +1004,10 @@ className: Rows_module_css_default.title,
 children: title
 }),
 (node.orphan === true || node.cycle === true) && (0, react_jsx_runtime.jsx)("span", {
+role: "img",
+"aria-label": node.orphan ? uiLabel("缺失父节点", "Orphan session") : uiLabel("检测到环", "Cycle detected"),
+"data-orphan": node.orphan === true ? "true" : void 0,
+"data-cycle": node.cycle === true ? "true" : void 0,
 style: {
 display: "inline-flex",
 alignItems: "center",
@@ -992,6 +1020,31 @@ cursor: "help"
 title: node.orphan ? uiLabel("缺失父节点", "Orphan session") : uiLabel("检测到环", "Cycle detected"),
 children: node.orphan ? "⚠" : "↻"
 }),
+					currentRoot && (0, react_jsx_runtime.jsx)("span", {
+						"data-current-root": "true",
+						role: "status",
+						title: collapsed && currentDescendantTitle ? uiLabel("当前会话：", "Current session: ") + currentDescendantTitle : uiLabel("当前会话在此根下", "Current session under this root"),
+						style: {
+							display: "inline-flex",
+							alignItems: "center",
+							flex: "0 1 auto",
+							marginLeft: 6,
+							padding: "0 6px",
+							height: 18,
+							borderRadius: 999,
+							fontSize: 11,
+							lineHeight: 1,
+							fontWeight: 500,
+							whiteSpace: "nowrap",
+							maxWidth: 160,
+							overflow: "hidden",
+							textOverflow: "ellipsis",
+							color: "var(--dsw-alias-state-business-primary)",
+							background: "color-mix(in srgb, var(--dsw-alias-state-business-primary) 12%, transparent)",
+							border: "1px solid color-mix(in srgb, var(--dsw-alias-state-business-primary) 35%, transparent)"
+						},
+						children: collapsed && currentDescendantTitle ? `${uiLabel("当前会话：", "Current: ")}${currentDescendantTitle}` : uiLabel("当前", "Current")
+					}),
 node.children !== void 0 && node.children.length > 0 && (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Menu, {
 open: branchMenuOpen,
 onClose: () => {
@@ -1344,6 +1397,8 @@ copiedLabel: t("hover.copied")
 		const SEARCH_QUERY_MAX_CODE_UNITS = 500;
 		/** Session rows visible per Workspace before the local overflow control. */
 		const COLLAPSED_SESSION_LIMIT = 5;
+		/** Shared immutable empty set for accounts with no collapsed branches. */
+		const EMPTY_COLLAPSED_SET = new Set();
 		/** Keep controlled input and RPC payload inside the session.search wire contract. */
 		function sanitizeSearchQuery(value) {
 			const withoutNul = value.replaceAll("\0", "");
@@ -1631,14 +1686,18 @@ return a.id < b.id ? -1 : 1;
 		* not accumulate duplicates.
 		*/
 		function buildSessionTree(sessions) {
-			const byId = new Map(sessions.map((node) => [node.id, node]));
-			for (const node of sessions) {
-				node.children = [];
-				delete node.orphan;
-				delete node.cycle;
-			}
+			// Make shallow copies so callers' session summaries are never mutated.
+			// The copies still carry id/parentId/title/status fields and are safe to
+			// hand to flattenSessionTree / SessionNodeItem.
+			const nodes = sessions.map((node) => {
+				const copy = { ...node, children: [] };
+				delete copy.orphan;
+				delete copy.cycle;
+				return copy;
+			});
+			const byId = new Map(nodes.map((node) => [node.id, node]));
 			const roots = [];
-			for (const node of sessions) {
+			for (const node of nodes) {
 				const parentId = node.parentId;
 				const parent = parentId !== void 0 && parentId !== node.id ? byId.get(parentId) : void 0;
 				if (parent === void 0) {
@@ -1660,10 +1719,10 @@ return a.id < b.id ? -1 : 1;
 				for (const child of node.children ?? []) visit(child);
 			};
 			for (const root of roots) visit(root);
-			for (const node of sessions) {
+			for (const node of nodes) {
 				if (!reachable.has(node.id)) node.cycle = true;
 			}
-			for (const node of sessions) {
+			for (const node of nodes) {
 				if (!reachable.has(node.id)) {
 					roots.push(node);
 					visit(node);
@@ -1712,32 +1771,32 @@ return a.id < b.id ? -1 : 1;
 		/** Build a nodeId -> ancestor-title array map for a session tree. Cycle-safe. */
 		function buildPathMap(roots) {
 			const map = new Map();
-			const walk = (nodes, ancestors, seen = new Set()) => {
+			const walk = (nodes, ancestors, seen) => {
 				for (const node of nodes) {
 					if (seen.has(node.id)) continue;
-					const nextSeen = new Set(seen);
-					nextSeen.add(node.id);
+					seen.add(node.id);
 					map.set(node.id, ancestors.map((a) => a.title));
-					walk(node.children ?? [], [...ancestors, node], nextSeen);
+					walk(node.children ?? [], [...ancestors, node], seen);
+					seen.delete(node.id);
 				}
 			};
-			walk(roots, []);
+			walk(roots, [], new Set());
 			return map;
 		}
 		/** Build a nodeId -> sibling node array map for a session tree. Cycle-safe. */
 		function buildSiblingsMap(roots) {
 			const map = new Map();
-			const walk = (nodes, seen = new Set()) => {
+			const walk = (nodes, seen) => {
+				const siblingsByNode = new Map();
+				for (const node of nodes) siblingsByNode.set(node.id, nodes.filter((n) => n.id !== node.id));
 				for (const node of nodes) {
 					if (seen.has(node.id)) continue;
-					const nextSeen = new Set(seen);
-					nextSeen.add(node.id);
-					const siblings = nodes.filter((n) => n.id !== node.id);
-					map.set(node.id, siblings);
-					walk(node.children ?? [], nextSeen);
+					seen.add(node.id);
+					map.set(node.id, siblingsByNode.get(node.id) || []);
+					walk(node.children ?? [], seen);
 				}
 			};
-			walk(roots);
+			walk(roots, new Set());
 			return map;
 		}
 		/** Collect ids of nodes that have at least one child (branch nodes). Cycle-safe. */
@@ -1824,18 +1883,27 @@ return a.id < b.id ? -1 : 1;
 			}, [setAllBranchesCollapsed, setBranchCollapsed]);
 			const [temporaryExpandedByAccount, setTemporaryExpandedByAccount] = (0,
 			react.useState)({});
-			const collapsedFor = (0, react.useCallback)(
-				(accountKey) => {
+			const collapsedByAccount = (0, react.useMemo)(() => {
+				const map = new Map();
+				const keys = new Set([
+					...Object.keys(collapsedBranchesByAccount || {}),
+					...Object.keys(temporaryExpandedByAccount)
+				]);
+				for (const key of keys) {
 					const collapsed = new Set(
-						(collapsedBranchesByAccount || {})[accountKey] || []
+						(collapsedBranchesByAccount || {})[key] || []
 					);
-					const temporary = temporaryExpandedByAccount[accountKey];
+					const temporary = temporaryExpandedByAccount[key];
 					if (temporary !== void 0) {
 						for (const id of temporary) collapsed.delete(id);
 					}
-					return collapsed;
-				},
-				[collapsedBranchesByAccount, temporaryExpandedByAccount]
+					map.set(key, collapsed);
+				}
+				return map;
+			}, [collapsedBranchesByAccount, temporaryExpandedByAccount]);
+			const collapsedFor = (0, react.useCallback)(
+				(accountKey) => collapsedByAccount.get(accountKey) || EMPTY_COLLAPSED_SET,
+				[collapsedByAccount]
 			);
 			const autoExpandedCurrent = (0, react.useRef)(null);
 			const [drag, setDrag] = (0, react.useState)(null);
@@ -1953,6 +2021,27 @@ return a.id < b.id ? -1 : 1;
 				}
 				return map;
 			}, [groups, collapsedFor, filterActive]);
+			const currentRootInfo = (0, react.useMemo)(() => {
+				if (current === void 0) return null;
+				for (const group of groups) {
+					if (!group.expanded) continue;
+					if (filterActive && !group.matchingIds.has(current)) continue;
+					const tree = sessionTreeByGroup.get(group.key);
+					if (tree === void 0) continue;
+					const ancestors = findSessionAncestors(tree.sessionTree, current);
+					if (ancestors === null) continue;
+					const currentNode = tree.sessionRows.find((row) => row.node.id === current)?.node || group.sessions.find((session) => session.id === current);
+					if (currentNode === void 0) continue;
+					return {
+						accountKey: group.key,
+						rootId: ancestors.length > 0 ? ancestors[0] : current,
+						pathTitles: tree.pathByNode.get(current) || [],
+						currentTitle: displayTitle(currentNode, t),
+						currentId: current
+					};
+				}
+				return null;
+			}, [current, groups, sessionTreeByGroup, filterActive, t]);
 			(0, react.useEffect)(() => {
 				if (current === void 0) return;
 				const group = groups.find((candidate) =>
@@ -1973,6 +2062,10 @@ return a.id < b.id ? -1 : 1;
 			(0, react.useEffect)(() => {
 				if (current === void 0 || autoExpandedCurrent.current === current)
 					return;
+				// Remember the current id even when it has no branch ancestors. This
+				// keeps auto-expand sticky per navigation: moving to another session
+				// (even one outside the tree) and coming back re-runs the reveal.
+				autoExpandedCurrent.current = current;
 				let found = false;
 				for (const [accountKey, tree] of sessionTreeByGroup) {
 					const ancestors = findSessionAncestors(tree.sessionTree, current);
@@ -1992,16 +2085,18 @@ return a.id < b.id ? -1 : 1;
 						});
 					}
 				}
-				if (found) autoExpandedCurrent.current = current;
 			}, [current, sessionTreeByGroup, collapsedFor]);
 			const toggleCollapsedSession = (accountKey, id) => {
 				const collapsed = collapsedFor(accountKey);
 				const next = !collapsed.has(id);
+				// Manual toggles become the source of truth: remove any temporary
+				// auto-expand override for this id before persisting the new state.
 				setTemporaryExpandedByAccount((prev) => {
 					const nextState = { ...prev };
-					const set = new Set(nextState[accountKey] || []);
-					if (next) set.delete(id);
-					else set.add(id);
+					const list = nextState[accountKey];
+					if (list === void 0 || list.length === 0) return nextState;
+					const set = new Set(list);
+					set.delete(id);
 					nextState[accountKey] = Array.from(set);
 					return nextState;
 				});
@@ -2073,21 +2168,53 @@ const jumpSibling = (dir, id) => {
 				setDrag(null);
 				const group = groups.find((candidate) => candidate.key === activeDrag.accountKey);
 				if (group === void 0) return;
-				const targetIndex = group.sessions.findIndex((session) => session.id === over.id);
-				if (targetIndex === -1) return;
-				const anchor = over.half === "before" ? over.id : group.sessions[targetIndex + 1]?.id;
-				if (anchor === activeDrag.sessionId) return;
-				const sourceIndex = group.sessions.findIndex((session) => session.id === activeDrag.sessionId);
-				const anchorIndex = anchor === void 0 ? group.sessions.length : group.sessions.findIndex((session) => session.id === anchor);
-				if (sourceIndex !== -1 && (anchorIndex === sourceIndex || anchorIndex === sourceIndex + 1)) return;
+				// Only manual ordering is editable. Auto/default/title/running order is
+				// derived and a drop there would be immediately overwritten.
+				if (orderBy !== "manual") return;
+				const activeRow = visibleRows.find(
+					(row) => row.accountKey === activeDrag.accountKey && row.node.id === activeDrag.sessionId
+				);
+				const overRow = visibleRows.find(
+					(row) => row.accountKey === activeDrag.accountKey && row.node.id === over.id
+				);
+				if (!activeRow || !overRow || activeDrag.sessionId === over.id) return;
+				// Tree-aware drop: a session may only be reordered among its siblings
+				// (same parent in the fork tree). Dropping onto a different branch or a
+				// descendant is ignored instead of corrupting the flat account order.
+				const siblings = activeRow.siblings || [];
+				if (!siblings.some((sibling) => sibling.id === over.id)) {
+					console.warn("[dsh-branch-workspace-folders] dropped session outside its branch parent; ignored");
+					return;
+				}
 				const accountSessionIds = activeDrag.accountKey === "" ? orderedUngroupedSessionIds : orderedWorkspaces.find((workspace) => workspace.workspaceId === activeDrag.accountKey)?.sessionIds;
 				if (accountSessionIds === void 0) return;
-				const nextOrder = accountSessionIds.filter((id) => id !== activeDrag.sessionId);
-				const insertAt = anchor === void 0 ? nextOrder.length : nextOrder.indexOf(anchor);
-				nextOrder.splice(insertAt === -1 ? nextOrder.length : insertAt, 0, activeDrag.sessionId);
+				const siblingIds = new Set(siblings.map((sibling) => sibling.id));
+				siblingIds.add(activeDrag.sessionId);
+				const currentSiblings = accountSessionIds.filter((id) => siblingIds.has(id));
+				const siblingOrder = siblings.map((sibling) => sibling.id);
+				const overIndex = siblingOrder.indexOf(over.id);
+				if (overIndex === -1) return;
+				const insertAt = over.half === "before" ? overIndex : overIndex + 1;
+				siblingOrder.splice(insertAt, 0, activeDrag.sessionId);
+				if (currentSiblings.length !== siblingOrder.length) return;
+				if (currentSiblings.every((id, index) => id === siblingOrder[index])) return;
+				// Replace only the sibling subsequence inside the account's flat order.
+				// Non-sibling sessions (other branches, parents) keep their slots, which
+				// preserves the tree grouping while changing child order.
+				const nextOrder = [...accountSessionIds];
+				const positions = [];
+				const current = [];
+				for (let i = 0; i < nextOrder.length; i++) {
+					if (siblingIds.has(nextOrder[i])) {
+						current.push(nextOrder[i]);
+						positions.push(i);
+					}
+				}
+				if (current.length !== siblingOrder.length) return;
+				for (let i = 0; i < positions.length; i++) nextOrder[positions[i]] = siblingOrder[i];
 				setSessionOrder(activeDrag.accountKey, nextOrder.map((id) => id));
-				if (orderBy === "updated" || activeDrag.accountKey === "") return;
-				insertSessionBefore(activeDrag.accountKey, activeDrag.sessionId, anchor).catch((reason) => {
+				if (activeDrag.accountKey === "") return;
+				insertSessionBefore(activeDrag.accountKey, activeDrag.sessionId, over.id).catch((reason) => {
 					console.warn("session reorder rejected:", reason);
 				});
 			};
@@ -2106,6 +2233,8 @@ const jumpSibling = (dir, id) => {
 					console.warn("workspace reorder rejected:", reason);
 				});
 			};
+			const currentPathSummary = currentRootInfo === null ? void 0 : currentRootInfo.pathTitles.length === 0 ? currentRootInfo.currentTitle : `${currentRootInfo.pathTitles[0]} › ${currentRootInfo.currentTitle}`;
+			const currentPathFull = currentRootInfo === null ? void 0 : `${uiLabel("当前路径：", "Current path: ")}${[...currentRootInfo.pathTitles, currentRootInfo.currentTitle].join(" › ")}`;
 			const workspaceDropAtListStart = groups[0]?.workspaceId !== void 0 && workspaceDrag?.over?.id === groups[0].workspaceId && workspaceDrag.over.half === "before";
 			return (0, react_jsx_runtime.jsxs)("div", {
 				className: clsx(WorkspaceBrowser_module_css_default.treeBody, WorkspaceBrowser_module_css_default.wide),
@@ -2113,6 +2242,48 @@ const jumpSibling = (dir, id) => {
 					workspaceDropAtListStart && (0, react_jsx_runtime.jsx)("span", {
 						className: WorkspaceBrowser_module_css_default.listTopDropIndicator,
 						"aria-hidden": "true"
+					}),
+					currentRootInfo !== null && (0, react_jsx_runtime.jsx)("div", {
+						"data-current-path": "true",
+						role: "status",
+						style: {
+							display: "flex",
+							alignItems: "center",
+							gap: 6,
+							padding: "4px 8px",
+							fontSize: 12,
+							lineHeight: "18px",
+							color: "var(--dsw-alias-label-secondary)",
+							borderBottom: "1px solid var(--dsw-alias-border-l2)",
+							whiteSpace: "nowrap",
+							overflow: "hidden",
+							textOverflow: "ellipsis",
+							maxWidth: "100%"
+						},
+						title: currentPathFull,
+						"aria-label": currentPathFull,
+						children: (0, react_jsx_runtime.jsxs)(react_jsx_runtime.Fragment, {
+							children: [
+								(0, react_jsx_runtime.jsx)("span", {
+									style: {
+										flex: "none",
+										width: 6,
+										height: 6,
+										borderRadius: "50%",
+										background: "var(--dsw-alias-state-business-primary)"
+									}
+								}),
+								(0, react_jsx_runtime.jsx)("span", {
+									style: {
+										overflow: "hidden",
+										textOverflow: "ellipsis",
+										whiteSpace: "nowrap",
+										minWidth: 0
+									},
+									children: currentPathSummary
+								})
+							]
+						})
 					}),
 					(0, react_jsx_runtime.jsxs)("div", {
 						className: clsx(WorkspaceBrowser_module_css_default.list, workspaceDropAtListStart && WorkspaceBrowser_module_css_default.listTopDropActive),
@@ -2155,6 +2326,7 @@ const jumpSibling = (dir, id) => {
 								});
 							};
 							const tree = sessionTreeByGroup.get(group.key);
+							const treeRowCount = tree?.sessionRows.length ?? 0;
 							const sessionRows = visibleRowsByGroup.get(group.key) || [];
 							return (0, react_jsx_runtime.jsxs)("div", {
 								className: clsx(WorkspaceBrowser_module_css_default.groupSection, workspaceMarker === "before" && WorkspaceBrowser_module_css_default.workspaceDropBefore, workspaceMarker === "after" && WorkspaceBrowser_module_css_default.workspaceDropAfter),
@@ -2170,6 +2342,7 @@ const jumpSibling = (dir, id) => {
 								children: [
 									(0, react_jsx_runtime.jsx)(ProjectRowItem, {
 										group,
+										containsCurrent: group.containsCurrent && !group.expanded,
 										t,
 										onToggle: () => {
 											if (group.expanded) setExpandedSessionGroups((keys) => keys.filter((key) => key !== group.key));
@@ -2200,6 +2373,8 @@ const jumpSibling = (dir, id) => {
 											depth,
 										muted,
 											collapsed: collapsedFor(group.key).has(node.id),
+											currentRoot: currentRootInfo !== null && currentRootInfo.accountKey === group.key && depth === 0 && node.id === currentRootInfo.rootId,
+											currentDescendantTitle: currentRootInfo !== null && currentRootInfo.accountKey === group.key && depth === 0 && node.id === currentRootInfo.rootId && currentRootInfo.currentId !== node.id ? currentRootInfo.currentTitle : void 0,
 											onToggleCollapse: node.children !== void 0 && node.children.length > 0 ? (id) => toggleCollapsedSession(group.key, id) : void 0,
 											currentId: current,
 											now,
@@ -2251,14 +2426,14 @@ const jumpSibling = (dir, id) => {
 											t
 										}, node.id);
 									}),
-									!filterActive && group.sessionCount > COLLAPSED_SESSION_LIMIT && (0, react_jsx_runtime.jsx)("button", {
+									!filterActive && treeRowCount > COLLAPSED_SESSION_LIMIT && (0, react_jsx_runtime.jsx)("button", {
 										type: "button",
 										className: WorkspaceBrowser_module_css_default.sessionOverflowButton,
 										"aria-expanded": expandedSessionGroups.includes(group.key),
 										onClick: () => {
 											setExpandedSessionGroups((keys) => toggled(keys, group.key));
 										},
-										children: expandedSessionGroups.includes(group.key) ? t("sessions.collapse") : t("sessions.expand", { n: group.sessionCount - COLLAPSED_SESSION_LIMIT })
+										children: expandedSessionGroups.includes(group.key) ? t("sessions.collapse") : t("sessions.expand", { n: treeRowCount - COLLAPSED_SESSION_LIMIT })
 									})
 								]
 							}, group.key);
@@ -2368,7 +2543,7 @@ const jumpSibling = (dir, id) => {
 			});
 		}
 		/** Flat search body: local metadata matches plus the current Host result page. */
-		function SearchResults({ useSessions, open, workspaces, archivedSessionIds, query, remote, resultLimit, t }) {
+		function SearchResults({ useSessions, open, workspaces, archivedSessionIds, query, remote, resultLimit, onLoadMore, t }) {
 			const list = useSessions((s) => s);
 			const currentRemote = remote.query === query ? remote : {
 				query,
@@ -2416,10 +2591,22 @@ const jumpSibling = (dir, id) => {
 							className: WorkspaceBrowser_module_css_default.empty,
 							children: t("search.noMatches")
 						}),
-						results.hasMore && (0, react_jsx_runtime.jsx)("div", {
+						results.hasMore && (typeof onLoadMore === "function" ? (0, react_jsx_runtime.jsx)("button", {
+							type: "button",
+							className: WorkspaceBrowser_module_css_default.searchStatus,
+							onClick: onLoadMore,
+							style: {
+								cursor: "pointer",
+								border: "none",
+								background: "none",
+								width: "100%",
+								textAlign: "left"
+							},
+							children: t("search.loadMore", { n: resultLimit })
+						}) : (0, react_jsx_runtime.jsx)("div", {
 							className: WorkspaceBrowser_module_css_default.searchStatus,
 							children: t("search.hasMore", { n: resultLimit })
-						})
+						}))
 					]
 				}), (0, react_jsx_runtime.jsx)("span", { className: WorkspaceBrowser_module_css_default.fade })]
 			});
@@ -2442,15 +2629,8 @@ const jumpSibling = (dir, id) => {
 			const sessionUpdatedAtByAccount = useStore((s) => s.sessionUpdatedAtByAccount);
 			const collapsedBranchesByAccount = useStore((s) => s.collapsedBranchesByAccount) || {};
 			const persistedFilter = useStore((s) => s.filter);
-			const [localFilter, setLocalFilter] = (0, react.useState)(() => {
-				try {
-					return localStorage.getItem("dsh.branch-workspace.filter") || "all";
-				} catch {
-					return "all";
-				}
-			});
 			const [globalBranchToggle, setGlobalBranchToggle] = (0, react.useState)({ version: 0, collapsed: false });
-			const filter = persistedFilter ?? localFilter;
+			const filter = persistedFilter ?? "all";
 			const allWorkspaceKeys = (0, react.useMemo)(() => ["", ...workspaces.map((workspace) => workspace.workspaceId)], [workspaces]);
 			const allGroupsExpanded = allWorkspaceKeys.length > 0 && allWorkspaceKeys.every((key) => groupExpansion[key] === true);
 			const branchIdsByAccount = (0, react.useMemo)(() => {
@@ -2493,6 +2673,7 @@ const jumpSibling = (dir, id) => {
 				items: [],
 				hasMore: false
 			});
+			const [searchLimit, setSearchLimit] = (0, react.useState)(searchResultLimit || 20);
 			const searchRoot = (0, react.useRef)(null);
 			const searchInput = (0, react.useRef)(null);
 			const [wsPickerOpen, setWsPickerOpen] = (0, react.useState)(false);
@@ -2601,6 +2782,7 @@ const jumpSibling = (dir, id) => {
 					items: [],
 					hasMore: false
 				});
+				setSearchLimit(searchResultLimit || 20);
 				const timer = window.setTimeout(() => {
 					searchSessions(normalizedQuery, controller.signal).then((result) => {
 						if (controller.signal.aborted) return;
@@ -2948,13 +3130,6 @@ const [deleteTarget, setDeleteTarget] = (0, react.useState)(null);
 														(0, react_jsx_runtime.jsx)(MoreMenu, {
 															filter,
 															onPickFilter: (id) => {
-																setLocalFilter(id);
-																try {
-																	localStorage.setItem(
-																		"dsh.branch-workspace.filter",
-																		id
-																	);
-																} catch {}
 																if (typeof actions.setFilter === "function")
 																	actions.setFilter(id);
 															},
@@ -3066,7 +3241,8 @@ const [deleteTarget, setDeleteTarget] = (0, react.useState)(null);
 										archivedSessionIds,
 										query: normalizedQuery,
 										remote: remoteSearch,
-										resultLimit: searchResultLimit,
+										resultLimit: searchLimit,
+										onLoadMore: () => setSearchLimit((limit) => limit + (searchResultLimit || 20)),
 										t,
 								  })
 								: groupBy === "flat"
@@ -3433,6 +3609,7 @@ const [deleteTarget, setDeleteTarget] = (0, react.useState)(null);
 			"search.unavailable": "内容搜索暂不可用，仅显示名称匹配。",
 			"search.noMatches": "无匹配会话",
 			"search.hasMore": "仅显示前 {n} 条结果，请缩小搜索范围。",
+			"search.loadMore": "加载更多结果",
 			"menu.addWorkspace": "添加工作区…",
 			"picker.loading": "正在加载工作区…",
 			"conflict.named": "已存在名为“{name}”的工作区。",
@@ -3498,6 +3675,7 @@ const [deleteTarget, setDeleteTarget] = (0, react.useState)(null);
 			"search.unavailable": "Content search is temporarily unavailable. Showing name matches.",
 			"search.noMatches": "No matching sessions",
 			"search.hasMore": "Showing the first {n} results. Narrow your search.",
+			"search.loadMore": "Load more results",
 			"menu.addWorkspace": "Add workspace…",
 			"picker.loading": "Loading workspaces…",
 			"conflict.named": "A workspace named “{name}” already exists.",

@@ -6,7 +6,7 @@
  * consumes this API to render "branch folders" in the left workspace area.
  */
 import { readdirSync, existsSync, statSync, readFileSync } from 'node:fs'
-import { writeFile, mkdir, rename, rm } from 'node:fs/promises'
+import { cp, writeFile, mkdir, rename, rm } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { readSessionHeader } from './host/zstd.js'
@@ -80,17 +80,7 @@ interface SessionFileRef {
 const SESSIONS_CACHE_TTL_MS = 2000
 let sessionsCache: { root: string; at: number; mtimeMs: number; signature: string; locations: SessionLocation[] } | null = null
 let persistenceCache: { at: number; locations: SessionLocation[] } | null = null
-interface ClustersCache {
-  at: number
-  root: string
-  rootMtimeMs: number
-  signature: string
-  clusters: BranchClusterDTO[]
-}
-const CLUSTERS_CACHE_TTL_MS = 5000
 const ARCHIVES_CACHE_TTL_MS = 10000
-const MAX_CONCURRENT_PARSES = 4
-let clustersCache: ClustersCache | null = null
 interface ArchivesCache {
   at: number
   archivedKey: string
@@ -466,41 +456,6 @@ export function buildClusters(parsed: ParsedSession[]): BranchClusterDTO[] {
   return clusters
 }
 
-async function parseAllSessions(
-  locations: SessionLocation[],
-  persistence: DshPersistence | undefined,
-  logger?: DshLogger,
-): Promise<ParsedSession[]> {
-  const parsed: ParsedSession[] = []
-  let index = 0
-  const workers = Array.from({ length: Math.min(MAX_CONCURRENT_PARSES, locations.length) }, async () => {
-    while (index < locations.length) {
-      const current = index++
-      const loc = locations[current]
-      try {
-        parsed.push(await parseSessionAt(loc, persistence, logger))
-      } catch (error) {
-        logger?.warn?.('[branch-workspace] skip unreadable session:', loc.sessionId, String(error))
-      }
-    }
-  })
-  await Promise.all(workers)
-  return parsed
-}
-
-/**
- * Filter clusters by current workspace without breaking the fork tree.
- *
- * A branch may live in a different cwd from its root session. Filtering
- * individual sessions before clustering would split that tree, so we keep the
- * complete cluster and only decide whether the cluster is relevant to the
- * requested workspace.
- */
-function filterClustersByCwd(clusters: BranchClusterDTO[], cwd?: string): BranchClusterDTO[] {
-  if (!cwd) return clusters
-  return clusters.filter((cluster) => cluster.sessions.some((session) => session.cwd === cwd))
-}
-
 export interface ArchivedSessionDTO {
   sessionId: string
   parentId?: string
@@ -525,7 +480,6 @@ async function readBody(req: any): Promise<string> {
 function invalidateCaches(): void {
   sessionsCache = null
   persistenceCache = null
-  clustersCache = null
   archivesCache = null
 }
 
@@ -653,7 +607,21 @@ async function purgeSession(
   const locations = await discoverSessionLocations(wctx, root, getPersistence())
   // Purge only needs the durable fork graph from SessionHeader, not full logs.
   // This removes the previous all-session decompress/parse bottleneck.
-  const lineage = lineageFromLocations(locations)
+  // Include archived ids that are already missing from disk but whose parent
+  // chain is known through the persistent metadata cache. Without this a
+  // missing archived child is invisible to collectFamilyIds() and would survive
+  // a root purge in archivedSessionIds.
+  const archivedMeta = getArchivedMetaCache(root)
+  const lineageItems = lineageFromLocations(locations)
+  const lineageById = new Map(lineageItems.map((item) => [item.sessionId, item]))
+  for (const id of archivedIds) {
+    if (lineageById.has(id)) continue
+    lineageItems.push({
+      sessionId: id,
+      parentId: archivedMeta.byId[id]?.parentId ?? headerParentId(archivedMeta.byId[id] as any),
+    })
+  }
+  const lineage = lineageItems
   const byId = new Map(lineage.map((item) => [item.sessionId, item.parentId]))
   // Allow metadata-only purge for archived ids whose log directory is already
   // missing/corrupt; `collectFamilyIds` still returns the id itself and the
@@ -703,10 +671,27 @@ async function purgeSession(
       await rename(p.dir, trashDir)
       moved.push({ dir: p.dir, trashDir })
     } catch (error: any) {
-      if (error?.code !== 'ENOENT') {
-        await rollbackMoves()
-        throw new Error(`移动会话目录失败: ${String(error?.message ?? error)}`)
+      if (error?.code === 'ENOENT') continue
+      if (error?.code === 'EXDEV') {
+        // The sessions root and trash root are on different filesystems.
+        // Copy the directory (with its session log) then remove the original.
+        try {
+          await cp(p.dir, trashDir, { recursive: true, force: true, errorOnExist: false })
+          await rm(p.dir, { recursive: true, force: true })
+          moved.push({ dir: p.dir, trashDir })
+          continue
+        } catch (copyError: any) {
+          try {
+            await rm(trashDir, { recursive: true, force: true })
+          } catch {
+            // best-effort partial-copy cleanup
+          }
+          await rollbackMoves()
+          throw new Error(`移动会话目录失败: ${String(copyError?.message ?? copyError)}`)
+        }
       }
+      await rollbackMoves()
+      throw new Error(`移动会话目录失败: ${String(error?.message ?? error)}`)
     }
   }
 
@@ -893,43 +878,6 @@ export function apply(ctx: AppContext): (() => void) | void {
         try {
           if (req.method === 'GET' && pathname === `${API_PREFIX}/health`) {
             sendJson(res, 200, { ok: true })
-            return
-          }
-
-          if (req.method === 'GET' && pathname === `${API_PREFIX}/clusters`) {
-            const now = Date.now()
-            const root = homeSessionsRoot(wctx)
-            let rootMtimeMs = 0
-            try {
-              rootMtimeMs = statSync(root).mtimeMs
-            } catch {
-              // ignore; fall through to TTL-only cache
-            }
-            // Fast path: build a cheap filesystem fingerprint (readdir + stat only)
-            // before doing the expensive discover/read-header/parse pass.
-            const files = listSessionFiles(root)
-            const signature = sessionFilesSignature(files)
-            if (
-              clustersCache &&
-              clustersCache.root === root &&
-              clustersCache.rootMtimeMs === rootMtimeMs &&
-              clustersCache.signature === signature &&
-              now - clustersCache.at < CLUSTERS_CACHE_TTL_MS
-            ) {
-              const cachedClusters = filterClustersByCwd(clustersCache.clusters, url.searchParams.get('cwd')?.trim())
-              sendJson(res, 200, { ok: true, data: { clusters: cachedClusters } })
-              return
-            }
-            const locations = await discoverSessionLocations(wctx, root, getPersistence())
-            const parsed = await parseAllSessions(locations, getPersistence(), ctx.logger)
-            // Build the complete fork-tree **before** applying the workspace filter.
-            // This keeps cross-workspace branch children attached to their real root
-            // instead of turning them into isolated roots.
-            const fullClusters = buildClusters(parsed)
-            clustersCache = { at: now, root, rootMtimeMs, signature, clusters: fullClusters }
-            const cwd = url.searchParams.get('cwd')?.trim()
-            const clusters = filterClustersByCwd(fullClusters, cwd)
-            sendJson(res, 200, { ok: true, data: { clusters } })
             return
           }
 
