@@ -48,6 +48,12 @@ const zh: Record<string, string> = {
   expandBranch: '展开分支',
   collapseBranch: '折叠分支',
   showMore: '显示更多',
+  selectAll: '全选',
+  restoreSelected: '恢复选中',
+  deleteSelected: '删除选中',
+  restoreBranch: '恢复整个分支',
+  restoredSelected: '已恢复 {n} 个会话。',
+  restoredBranch: '已恢复整个分支。',
 }
 
 const en: Record<string, string> = {
@@ -74,6 +80,12 @@ const en: Record<string, string> = {
   expandBranch: 'Expand branch',
   collapseBranch: 'Collapse branch',
   showMore: 'Show more',
+  selectAll: 'Select all',
+  restoreSelected: 'Restore selected',
+  deleteSelected: 'Delete selected',
+  restoreBranch: 'Restore whole branch',
+  restoredSelected: 'Restored {n} sessions.',
+  restoredBranch: 'Restored the whole branch.',
 }
 
 const dictionaries: Record<string, Record<string, string>> = { zh, en }
@@ -109,11 +121,13 @@ export function ArchivedSettingsSection(props: any): any {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [busyId, setBusyId] = useState<string | null>(null)
+  const [batchBusy, setBatchBusy] = useState(false)
   const [confirm, setConfirm] = useState<ArchivedSessionDTO | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
   const [collapsedIds, setCollapsedIds] = useState<Set<string>>(new Set())
   const [defaultsApplied, setDefaultsApplied] = useState(false)
   const [visibleLimit, setVisibleLimit] = useState(50)
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
 
   const load = async () => {
     setLoading(true)
@@ -122,7 +136,10 @@ export function ArchivedSettingsSection(props: any): any {
       const res = await fetch('/branch-workspace/api/archives', { headers: { accept: 'application/json' } })
       const json = await res.json().catch(() => null)
       if (!json || json.ok !== true) throw new Error(json?.error || label('loadFailed'))
-      setSessions(Array.isArray(json.data?.sessions) ? json.data.sessions : [])
+      const nextSessions = Array.isArray(json.data?.sessions) ? json.data.sessions : []
+      setSessions(nextSessions)
+      const available = new Set(nextSessions.map((s: ArchivedSessionDTO) => s.sessionId))
+      setSelectedIds((prev) => new Set(Array.from(prev).filter((id) => available.has(id))))
     } catch (e: any) {
       setError(e?.message || String(e))
     } finally {
@@ -156,6 +173,9 @@ export function ArchivedSettingsSection(props: any): any {
 .bwf-archive-time{color:var(--dsw-alias-label-tertiary);font-size:12px;white-space:nowrap}
 .bwf-archive-actions{display:inline-flex;align-items:center;gap:4px;opacity:.85}
 .bwf-archive-toggle{display:inline-flex;align-items:center;justify-content:center;flex:none;width:20px;height:20px;padding:0;border:none;background:none;color:var(--dsw-alias-label-tertiary);cursor:pointer;border-radius:6px}
+.bwf-archive-toolbar{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.bwf-archive-select-all{display:inline-flex;align-items:center;gap:6px;color:var(--dsw-alias-label-secondary);font-size:13px;cursor:pointer}
+.bwf-archive-checkbox{flex:none;width:16px;height:16px;margin:0;accent-color:var(--dsw-alias-state-business-primary)}
 .bwf-archive-show-more{width:100%;margin-top:4px}
 `
       document.head.appendChild(style)
@@ -200,6 +220,24 @@ export function ArchivedSettingsSection(props: any): any {
   const rows = useMemo(() => flattenSessionTree(roots, 0, [], new Set(), collapsedIds), [roots, collapsedIds])
   const visibleRows = useMemo(() => rows.slice(0, visibleLimit), [rows, visibleLimit])
   const byId = useMemo(() => new Map(sessions.map((s) => [s.sessionId, s])), [sessions])
+
+  const selectedVisibleRows = visibleRows.filter(({ node }: { node: any }) => selectedIds.has(node.id))
+  const selectedRootRows = selectedVisibleRows.filter(({ node }: { node: any }) => {
+    const dto = byId.get(node.id)
+    return !!dto && !dto.parentKnown
+  })
+  const allVisibleSelected = visibleRows.length > 0 && visibleRows.every(({ node }: { node: any }) => selectedIds.has(node.id))
+  const toggleSelect = (sessionId: string) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev)
+      if (next.has(sessionId)) next.delete(sessionId)
+      else next.add(sessionId)
+      return next
+    })
+  }
+  const toggleSelectAll = () => {
+    setSelectedIds(allVisibleSelected ? new Set() : new Set(visibleRows.map(({ node }: { node: any }) => node.id)))
+  }
 
   const branchRoots = useMemo(() => roots.filter((root: any) => root.children && root.children.length > 0), [roots])
   const allCollapsed = branchRoots.length > 0 && branchRoots.every((root: any) => collapsedIds.has(root.id))
@@ -253,9 +291,54 @@ export function ArchivedSettingsSection(props: any): any {
     }
   }
 
+  const runBatchAction = async (path: string, payload: Record<string, unknown>, successText: string) => {
+    setBatchBusy(true)
+    setError(null)
+    setNotice(null)
+    try {
+      const res = await fetch(path, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', accept: 'application/json' },
+        body: JSON.stringify(payload),
+      })
+      const json = await res.json().catch(() => null)
+      if (!json || json.ok !== true) throw new Error(json?.error || label('workError'))
+      setNotice(successText)
+      setSelectedIds(new Set())
+      // The sidebar keeps its own sessions/workspaces client stores. After
+      // restore/purge, refresh those stores so a deleted session does not
+      // linger as a stale "Ungrouped" partition until a full browser reload.
+      if (typeof onMutated === 'function') {
+        try {
+          await onMutated()
+        } catch (refreshError) {
+          console.error('[dsh-branch-workspace-folders] sidebar refresh after archive mutation failed', refreshError)
+        }
+      }
+      await load()
+    } catch (e: any) {
+      setError(e?.message || String(e))
+    } finally {
+      setBatchBusy(false)
+    }
+  }
+
   const restore = (sessionId: string) => runAction(sessionId, '/branch-workspace/api/restore', label('restored'))
   const purge = (target: ArchivedSessionDTO) =>
     runAction(target.sessionId, '/branch-workspace/api/purge', label('deleted', { n: target.descendantCount + 1 }))
+  const restoreBranch = (target: ArchivedSessionDTO) => runAction(target.sessionId, '/branch-workspace/api/restore-branch', label('restoredBranch'))
+  const restoreSelected = () => runBatchAction(
+    '/branch-workspace/api/restore-batch',
+    { sessionIds: Array.from(selectedIds) },
+    label('restoredSelected', { n: selectedIds.size }),
+  )
+  const deleteSelected = () => runBatchAction(
+    '/branch-workspace/api/purge-batch',
+    { sessionIds: selectedRootRows.map(({ node }: { node: any }) => node.id) },
+    label('deleted', {
+      n: selectedRootRows.reduce((sum: number, { node }: { node: any }) => sum + ((byId.get(node.id)?.descendantCount ?? 0) + 1), 0),
+    }),
+  )
 
   if (loading && sessions.length === 0) {
     return (
@@ -274,9 +357,6 @@ export function ArchivedSettingsSection(props: any): any {
       <div className="bwf-archive-header">
         <IconArchiveOutline20 />
         <h2>{label('title')}</h2>
-        <Button size="sm" variant="ghost" icon={<IconRefreshOutline16 />} onClick={load} disabled={loading}>
-          {label('refresh')}
-        </Button>
         {branchRoots.length > 0 ? (
           <Button size="sm" variant="ghost" onClick={allCollapsed ? expandAll : collapseAll}>
             {allCollapsed ? label('expandAll') : label('collapseAll')}
@@ -288,6 +368,34 @@ export function ArchivedSettingsSection(props: any): any {
       {!loading && sessions.length === 0 ? <p className="bwf-archive-empty">{label('empty')}</p> : null}
       {rows.length > 0 ? (
         <>
+          <div className="bwf-archive-toolbar">
+            <label className="bwf-archive-select-all">
+              <input
+                type="checkbox"
+                className="bwf-archive-checkbox"
+                checked={allVisibleSelected}
+                onChange={toggleSelectAll}
+                disabled={batchBusy || !!busyId}
+              />
+              {label('selectAll')}
+            </label>
+            <Button
+              size="sm"
+              variant="ghost"
+              disabled={selectedIds.size === 0 || batchBusy || !!busyId}
+              onClick={restoreSelected}
+            >
+              {label('restoreSelected')}{selectedIds.size > 0 ? ` (${selectedIds.size})` : ''}
+            </Button>
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={selectedRootRows.length === 0 || batchBusy || !!busyId}
+              onClick={deleteSelected}
+            >
+              {label('deleteSelected')}{selectedRootRows.length > 0 ? ` (${selectedRootRows.length})` : ''}
+            </Button>
+          </div>
           <ul className="bwf-archive-list" role="tree" aria-label={label('title')}>
             {visibleRows.map(({ node, depth }: { node: any; depth: number }) => {
               const dto = byId.get(node.id)
@@ -304,6 +412,14 @@ export function ArchivedSettingsSection(props: any): any {
                   className="bwf-archive-row"
                   style={{ paddingLeft: 8 + depth * 20 }}
                 >
+                  <input
+                    type="checkbox"
+                    className="bwf-archive-checkbox"
+                    checked={selectedIds.has(node.id)}
+                    onChange={() => toggleSelect(node.id)}
+                    disabled={batchBusy || !!busyId}
+                    aria-label={`${label('selectAll')} ${node.title || node.id}`}
+                  />
                   {expandable ? (
                     <button
                       type="button"
@@ -335,11 +451,22 @@ export function ArchivedSettingsSection(props: any): any {
                       size="sm"
                       variant="ghost"
                       icon={<IconRefreshOutline16 />}
-                      disabled={busyId === node.id}
+                      disabled={busyId === node.id || batchBusy}
                       onClick={() => restore(node.id)}
                     >
                       {busyId === node.id ? label('restoring') : label('restore')}
                     </Button>
+                    {dto && !dto.parentKnown && descendantCount > 0 ? (
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        icon={<IconBranchOutline16 />}
+                        disabled={busyId === node.id || batchBusy}
+                        onClick={() => restoreBranch(dto)}
+                      >
+                        {label('restoreBranch')}
+                      </Button>
+                    ) : null}
                     {dto && !dto.parentKnown ? (
                       <Button
                         size="sm"

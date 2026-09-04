@@ -34,13 +34,13 @@
 						d.groupBy = mode;
 					},
 					setOrderBy: (d, mode) => {
-						d.orderBy = mode;
+						d.orderBy = mode === "manual" ? mode : "updated";
 					},
 					setGroupExpanded: (d, key, expanded) => {
 						d.groupExpansion[key] = expanded;
 					},
 					setFilter: (d, filter) => {
-						d.filter = filter;
+						d.filter = filter === "running" || filter === "archived" ? filter : "all";
 					},
 					setBranchCollapsed: (d, accountKey, nodeId, collapsed) => {
 						const list = Array.isArray(d.collapsedBranchesByAccount[accountKey]) ? d.collapsedBranchesByAccount[accountKey].slice() : [];
@@ -230,7 +230,6 @@
 				groupingArchived,
 				view.ungroupedOrder
 			)) {
-				if (filter === "currentWorkspace" && g.key !== currentGroup) continue;
 				const allMembers = g.sessions;
 				let matching = allMembers;
 				if (filter === "running") {
@@ -272,15 +271,7 @@ function deriveFlat(list, archivedSessionIds, orderBy = "updated", filter = "all
 				}
 				rows.push(s);
 			}
-			if (orderBy === "default") {
-				// Preserve the Host/account list order.
-			} else if (orderBy === "title") {
-				rows.sort((a, b) => compareSessionTitle(a, b));
-			} else if (orderBy === "running") {
-				rows.sort((a, b) => compareSessionRunning(a, b));
-			} else {
-				rows.sort(byRecency);
-			}
+			rows.sort(byRecency);
 			return rows.map((session) => sessionNode(session, descendants));
 		}
 		/**
@@ -1462,40 +1453,10 @@ copiedLabel: t("hover.copied")
 			return a < b ? -1 : 1;
 		}
 
-/** Compare session display titles (case-insensitive, id tie-break). */
-function compareSessionTitle(a, b) {
-const aTitle = sessionTitle(a).toLowerCase();
-const bTitle = sessionTitle(b).toLowerCase();
-if (aTitle !== bTitle) return aTitle < bTitle ? -1 : 1;
-return a.id < b.id ? -1 : 1;
-}
-/** Running sessions first, then recency, then id (stable deterministic tree order). */
-function compareSessionRunning(a, b) {
-if (a.running !== b.running) return a.running ? -1 : 1;
-if (a.updatedAt !== b.updatedAt) return b.updatedAt - a.updatedAt;
-return a.id < b.id ? -1 : 1;
-}
 		/** Reconcile one editable order account and apply its activity-promotion policy. */
 		function nextSessionOrderAccount({ sessionIds, previousOrder, previousUpdatedAt, list, orderBy, sortByRecency }) {
 			let order = reconciledSessionOrder(sessionIds, previousOrder);
-			if (orderBy === "default") {
-				// Host/account order; ignore any stale manual order.
-				order = [...sessionIds];
-			} else if (orderBy === "title") {
-				order = [...sessionIds].sort((a, b) => {
-					const aSession = list.byId[a];
-					const bSession = list.byId[b];
-					if (aSession === void 0 || bSession === void 0) return 0;
-					return compareSessionTitle(aSession, bSession);
-				});
-			} else if (orderBy === "running") {
-				order = [...sessionIds].sort((a, b) => {
-					const aSession = list.byId[a];
-					const bSession = list.byId[b];
-					if (aSession === void 0 || bSession === void 0) return 0;
-					return compareSessionRunning(aSession, bSession);
-				});
-			} else if (sortByRecency) {
+			if (sortByRecency) {
 				order.sort((a, b) => compareSessionRecency(a, b, list.byId));
 			} else if (orderBy === "updated") {
 				const promoted = sessionIds.filter((id) => {
@@ -1525,16 +1486,15 @@ return a.id < b.id ? -1 : 1;
 			if (typeof navigator !== "undefined" && /^zh/i.test(navigator.language || "")) return zh;
 			return en;
 		}
-		/** More menu: consolidates filter, batch-select, tree controls and refresh. */
-		function MoreMenu({ filter, onPickFilter, onBatchSelect, onCreateWorkspace, groupBy, allGroupsExpanded, onToggleAllGroups, allBranchesCollapsed, onToggleAllBranches, onRefresh, t }) {
+		/** More menu: consolidates filter, batch-select, tree controls. */
+		function MoreMenu({ filter, onPickFilter, onBatchSelect, onCreateWorkspace, groupBy, allGroupsExpanded, onToggleAllGroups, allBranchesCollapsed, onToggleAllBranches, t }) {
 			const [open, setOpen] = (0, react.useState)(false);
-			const filterId = filter === "running" ? "filter-running" : filter === "archived" ? "filter-archived" : filter === "currentWorkspace" ? "filter-current" : "filter-all";
+			const filterId = filter === "running" ? "filter-running" : filter === "archived" ? "filter-archived" : "filter-all";
 			const items = [
 				{ type: "label", id: "filter-label", text: uiLabel("筛选", "Filter") },
 				{ id: "filter-all", label: uiLabel("全部", "All") },
 				{ id: "filter-running", label: uiLabel("运行中", "Running") },
 				{ id: "filter-archived", label: uiLabel("已归档", "Archived") },
-				{ id: "filter-current", label: uiLabel("当前工作区", "Current workspace") },
 				{ type: "separator", id: "sep-add" },
 				{ id: "create-workspace", label: t("workspace.add"), icon: (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.IconProjectAddOutline16, { size: 14 }) },
 				{ type: "separator", id: "sep-batch" },
@@ -1555,8 +1515,6 @@ return a.id < b.id ? -1 : 1;
 					icon: (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.IconBranchOutline16, { size: 13 })
 				});
 			}
-			items.push({ type: "separator", id: "sep-refresh" });
-			items.push({ id: "refresh", label: uiLabel("刷新", "Refresh"), icon: (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.IconRefreshOutline16, {}) });
 			return (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Menu, {
 				open,
 				onClose: () => {
@@ -1569,12 +1527,10 @@ return a.id < b.id ? -1 : 1;
 					if (id === "filter-all") onPickFilter("all");
 					else if (id === "filter-running") onPickFilter("running");
 					else if (id === "filter-archived") onPickFilter("archived");
-					else if (id === "filter-current") onPickFilter("currentWorkspace");
 					else if (id === "create-workspace") onCreateWorkspace();
 					else if (id === "batch-select") onBatchSelect();
 					else if (id === "toggle-workspaces") onToggleAllGroups();
 					else if (id === "toggle-branches") onToggleAllBranches();
-					else if (id === "refresh") onRefresh();
 				},
 				align: "end",
 				dense: true,
@@ -1635,24 +1591,12 @@ return a.id < b.id ? -1 : 1;
 					{
 						id: "updated",
 						label: t("orderBy.updated")
-					},
-					{
-						id: "default",
-						label: uiLabel("默认排序", "Default order")
-					},
-					{
-						id: "title",
-						label: uiLabel("按根标题", "By root title")
-					},
-					{
-						id: "running",
-						label: uiLabel("按运行状态", "By running state")
 					}
 				],
 				selectedIds: [groupBy, orderBy],
 				onSelect: (id) => {
 					if (id === "workspace" || id === "flat") onGroupPick(id);
-					else if (id === "manual" || id === "updated" || id === "default" || id === "title" || id === "running") onOrderPick(id);
+					else if (id === "manual" || id === "updated") onOrderPick(id);
 					setOpen(false);
 				},
 				align: "end",
@@ -1942,23 +1886,6 @@ return a.id < b.id ? -1 : 1;
 			}, [list, workspaces]);
 			const sortSessionIds = (sessionIds, accountKey) => {
 				const ids = sessionIds.filter((id) => list.byId[id] !== void 0);
-				if (orderBy === "default") return [...ids];
-				if (orderBy === "title") {
-					return [...ids].sort((a, b) => {
-						const aSession = list.byId[a];
-						const bSession = list.byId[b];
-						if (!aSession || !bSession) return 0;
-						return compareSessionTitle(aSession, bSession);
-					});
-				}
-				if (orderBy === "running") {
-					return [...ids].sort((a, b) => {
-						const aSession = list.byId[a];
-						const bSession = list.byId[b];
-						if (!aSession || !bSession) return 0;
-						return compareSessionRunning(aSession, bSession);
-					});
-				}
 				if (orderBy === "updated") {
 					return [...ids].sort((a, b) =>
 						compareSessionRecency(a, b, list.byId)
@@ -1997,7 +1924,7 @@ return a.id < b.id ? -1 : 1;
 					sessionOrderByAccount,
 				]
 			);
-			const filterActive = filter !== "all" && filter !== "currentWorkspace";
+			const filterActive = filter !== "all";
 			const sessionTreeByGroup = (0, react.useMemo)(() => {
 				const map = new Map();
 				for (const group of groups) {
@@ -2163,7 +2090,63 @@ return a.id < b.id ? -1 : 1;
 				}
 			};
 			const visibleRows = (0, react.useMemo)(() => Array.from(visibleRowsByGroup.values()).flat(), [visibleRowsByGroup]);
-const jumpSibling = (dir, id) => {
+			const TREE_PROJECT_ROW_HEIGHT = 34;
+			const TREE_SESSION_STEP = 34;
+			const TREE_GROUP_GAP = 4;
+			const TREE_OVERFLOW_HEIGHT = 28;
+			const TREE_OVERSCAN = 8;
+			const treeListRef = (0, react.useRef)(null);
+			const [treeScroll, setTreeScroll] = (0, react.useState)({ top: 0, height: 600 });
+			(0, react.useEffect)(() => {
+				const el = treeListRef.current;
+				if (!el) return;
+				const update = () => {
+					setTreeScroll({ top: el.scrollTop, height: el.clientHeight || 0 });
+				};
+				update();
+				el.addEventListener("scroll", update, { passive: true });
+				const observer = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(update);
+				observer?.observe(el);
+				return () => {
+					el.removeEventListener("scroll", update);
+					observer?.disconnect();
+				};
+			}, []);
+			const groupLayouts = (0, react.useMemo)(() => {
+				let offset = 0;
+				const layouts = [];
+				for (const group of groups) {
+					const rows = visibleRowsByGroup.get(group.key) || [];
+					const tree = sessionTreeByGroup.get(group.key);
+					const treeRowCount = tree?.sessionRows.length ?? 0;
+					const rowCount = rows.length;
+					const hasOverflow = !filterActive && treeRowCount > COLLAPSED_SESSION_LIMIT;
+					const bodyHeight = rowCount * TREE_SESSION_STEP + (hasOverflow ? TREE_OVERFLOW_HEIGHT : 0);
+					const height = TREE_PROJECT_ROW_HEIGHT + (bodyHeight > 0 ? 2 : 0) + bodyHeight;
+					layouts.push({ key: group.key, offset, rowCount, height });
+					offset += height + TREE_GROUP_GAP;
+				}
+				return layouts;
+			}, [groups, visibleRowsByGroup, sessionTreeByGroup, filterActive]);
+			const groupRowWindows = (0, react.useMemo)(() => {
+				const map = new Map();
+				const viewTop = treeScroll.top;
+				const viewBottom = treeScroll.top + treeScroll.height;
+				for (const layout of groupLayouts) {
+					const rowAreaTop = layout.offset + TREE_PROJECT_ROW_HEIGHT + 2;
+					const rowAreaBottom = rowAreaTop + layout.rowCount * TREE_SESSION_STEP;
+					let start = 0;
+					let end = 0;
+					if (layout.rowCount > 0 && rowAreaBottom > viewTop && rowAreaTop < viewBottom) {
+						start = Math.max(0, Math.floor((viewTop - rowAreaTop) / TREE_SESSION_STEP) - TREE_OVERSCAN);
+						end = Math.min(layout.rowCount, Math.ceil((viewBottom - rowAreaTop) / TREE_SESSION_STEP) + TREE_OVERSCAN);
+						end = Math.max(start, end);
+					}
+					map.set(layout.key, { start, end });
+				}
+				return map;
+			}, [groupLayouts, treeScroll]);
+			const jumpSibling = (dir, id) => {
 				const row = visibleRows.find((candidate) => candidate.node.id === id);
 				if (!row || row.siblings.length < 2) return;
 				const index = row.siblings.findIndex((sibling) => sibling.id === id);
@@ -2181,8 +2164,8 @@ const jumpSibling = (dir, id) => {
 				setDrag(null);
 				const group = groups.find((candidate) => candidate.key === activeDrag.accountKey);
 				if (group === void 0) return;
-				// Only manual ordering is editable. Auto/default/title/running order is
-				// derived and a drop there would be immediately overwritten.
+				// Only manual ordering is editable. Updated order is derived and a drop
+				// there would be immediately overwritten.
 				if (orderBy !== "manual") return;
 				const activeRow = visibleRows.find(
 					(row) => row.accountKey === activeDrag.accountKey && row.node.id === activeDrag.sessionId
@@ -2255,6 +2238,7 @@ const jumpSibling = (dir, id) => {
 						"aria-hidden": "true"
 					}),
 					(0, react_jsx_runtime.jsxs)("div", {
+						ref: treeListRef,
 						className: clsx(WorkspaceBrowser_module_css_default.list, workspaceDropAtListStart && WorkspaceBrowser_module_css_default.listTopDropActive),
 						role: "tree",
 						"aria-label": t("section.sessions"),
@@ -2297,6 +2281,8 @@ const jumpSibling = (dir, id) => {
 							const tree = sessionTreeByGroup.get(group.key);
 							const treeRowCount = tree?.sessionRows.length ?? 0;
 							const sessionRows = visibleRowsByGroup.get(group.key) || [];
+							const rowWindow = groupRowWindows.get(group.key) || { start: 0, end: 0 };
+							const windowedSessionRows = sessionRows.slice(rowWindow.start, rowWindow.end);
 							return (0, react_jsx_runtime.jsxs)("div", {
 								className: clsx(WorkspaceBrowser_module_css_default.groupSection, workspaceMarker === "before" && WorkspaceBrowser_module_css_default.workspaceDropBefore, workspaceMarker === "after" && WorkspaceBrowser_module_css_default.workspaceDropAfter),
 								onDragOver: workspaceDrag === null || hoverWorkspace === void 0 ? void 0 : (e) => {
@@ -2335,7 +2321,11 @@ const jumpSibling = (dir, id) => {
 											}
 										}
 									}),
-									sessionRows.map(({ node, depth, muted }) => {
+									rowWindow.start > 0 && (0, react_jsx_runtime.jsx)("div", {
+										style: { height: rowWindow.start * TREE_SESSION_STEP },
+										"aria-hidden": "true"
+									}),
+									windowedSessionRows.map(({ node, depth, muted }) => {
 										const sameGroupDrag = drag !== null && drag.accountKey === group.key;
 										const currentMarker = currentMarkerInfo !== null && currentMarkerInfo.accountKey === group.key ? currentMarkerInfo : null;
 										const isCurrent = currentMarker !== null && node.id === currentMarker.currentId;
@@ -2398,6 +2388,10 @@ const jumpSibling = (dir, id) => {
 											t
 										}, node.id);
 									}),
+									rowWindow.end < sessionRows.length && (0, react_jsx_runtime.jsx)("div", {
+										style: { height: (sessionRows.length - rowWindow.end) * TREE_SESSION_STEP },
+										"aria-hidden": "true"
+									}),
 									!filterActive && treeRowCount > COLLAPSED_SESSION_LIMIT && (0, react_jsx_runtime.jsx)("button", {
 										type: "button",
 										className: WorkspaceBrowser_module_css_default.sessionOverflowButton,
@@ -2433,6 +2427,29 @@ const jumpSibling = (dir, id) => {
 				orderBy,
 				sessionIds
 			]);
+			const FLAT_VIRTUAL_ROW_HEIGHT = 34;
+			const listRef = (0, react.useRef)(null);
+			const [virtualRange, setVirtualRange] = (0, react.useState)({ start: 0, end: 50 });
+			(0, react.useEffect)(() => {
+				const el = listRef.current;
+				if (!el) return;
+				const update = () => {
+					const height = FLAT_VIRTUAL_ROW_HEIGHT;
+					const overscan = 8;
+					const start = Math.max(0, Math.floor(el.scrollTop / height) - overscan);
+					const end = Math.min(rows.length, Math.ceil((el.scrollTop + el.clientHeight) / height) + overscan);
+					setVirtualRange((prev) => prev.start === start && prev.end === end ? prev : { start, end });
+				};
+				update();
+				el.addEventListener("scroll", update, { passive: true });
+				const observer = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(update);
+				observer?.observe(el);
+				return () => {
+					el.removeEventListener("scroll", update);
+					observer?.disconnect();
+				};
+			}, [rows.length]);
+			const windowedRows = (0, react.useMemo)(() => rows.slice(virtualRange.start, virtualRange.end), [rows, virtualRange]);
 			const [drag, setDrag] = (0, react.useState)(null);
 			const dropCommitted = (0, react.useRef)(false);
 			useNativeDragAcceptance(drag !== null);
@@ -2456,13 +2473,17 @@ const jumpSibling = (dir, id) => {
 			return (0, react_jsx_runtime.jsxs)("div", {
 				className: clsx(WorkspaceBrowser_module_css_default.treeBody, WorkspaceBrowser_module_css_default.wide),
 				children: [(0, react_jsx_runtime.jsxs)("div", {
+					ref: listRef,
 					className: clsx(WorkspaceBrowser_module_css_default.list, WorkspaceBrowser_module_css_default.flatList),
 					role: "tree",
 					"aria-label": t("section.sessions"),
 					children: [rows.length === 0 && (0, react_jsx_runtime.jsx)("div", {
 						className: WorkspaceBrowser_module_css_default.empty,
 						children: t("empty.none")
-					}), rows.map((node) => {
+					}), virtualRange.start > 0 && (0, react_jsx_runtime.jsx)("div", {
+						style: { height: virtualRange.start * FLAT_VIRTUAL_ROW_HEIGHT },
+						"aria-hidden": "true"
+					}), windowedRows.map((node) => {
 						const active = drag !== null;
 						return (0, react_jsx_runtime.jsx)(SessionNodeItem, {
 							node,
@@ -2510,6 +2531,9 @@ const jumpSibling = (dir, id) => {
 							},
 							t
 						}, node.id);
+					}), virtualRange.end < rows.length && (0, react_jsx_runtime.jsx)("div", {
+						style: { height: (rows.length - virtualRange.end) * FLAT_VIRTUAL_ROW_HEIGHT },
+						"aria-hidden": "true"
 					})]
 				}), (0, react_jsx_runtime.jsx)("span", { className: WorkspaceBrowser_module_css_default.fade })]
 			});
@@ -2595,14 +2619,14 @@ const jumpSibling = (dir, id) => {
 			const archivedSessionIds = useWorkspaces((state) => state.archivedSessionIds);
 			const directoryFlowAvailable = useDirectoryFlow((occupied) => occupied);
 			const groupBy = useStore((s) => s.groupBy);
-			const orderBy = useStore((s) => s.orderBy);
+			const orderBy = useStore((s) => s.orderBy) === "manual" ? "manual" : "updated";
 			const groupExpansion = useStore((s) => s.groupExpansion);
 			const sessionOrderByAccount = useStore((s) => s.sessionOrderByAccount);
 			const sessionUpdatedAtByAccount = useStore((s) => s.sessionUpdatedAtByAccount);
 			const collapsedBranchesByAccount = useStore((s) => s.collapsedBranchesByAccount) || {};
 			const persistedFilter = useStore((s) => s.filter);
 			const [globalBranchToggle, setGlobalBranchToggle] = (0, react.useState)({ version: 0, collapsed: false });
-			const filter = persistedFilter ?? "all";
+			const filter = persistedFilter === "running" || persistedFilter === "archived" ? persistedFilter : "all";
 			const allWorkspaceKeys = (0, react.useMemo)(() => ["", ...workspaces.map((workspace) => workspace.workspaceId)], [workspaces]);
 			const allGroupsExpanded = allWorkspaceKeys.length > 0 && allWorkspaceKeys.every((key) => groupExpansion[key] === true);
 			const branchIdsByAccount = (0, react.useMemo)(() => {
@@ -2666,12 +2690,21 @@ const jumpSibling = (dir, id) => {
 				setSelectedIds(new Set());
 				setSelectionMode(false);
 			};
-			const archiveSelected = () => {
-				for (const id of selectedIds) {
-					archiveSession(id).catch((reason) => {
-						console.warn("batch archive rejected:", reason);
-					});
+			const refreshAfterArchive = () => {
+				if (typeof refreshSessions !== "function") return;
+				try {
+					refreshSessions();
+				} catch (error) {
+					console.warn("sidebar refresh after archive failed:", error);
 				}
+			};
+			const archiveSelected = () => {
+				const ids = Array.from(selectedIds);
+				Promise.all(ids.map((id) => archiveSession(id).catch((reason) => {
+					console.warn("batch archive rejected:", reason);
+				}))).then(() => {
+					refreshAfterArchive();
+				});
 				clearSelection();
 			};
 			(0, react.useEffect)(() => {
@@ -2854,6 +2887,7 @@ const jumpSibling = (dir, id) => {
 				archiveSession(sessionId)
 					.then(() => {
 						setNotice(uiLabel("已归档，日志已保留", "Archived; logs retained"));
+						refreshAfterArchive();
 					})
 					.catch((reason) => {
 						console.warn("session archive rejected:", reason);
@@ -2887,6 +2921,7 @@ const jumpSibling = (dir, id) => {
 								"Archived root and branches; logs retained"
 							)
 						);
+						refreshAfterArchive();
 					})
 					.catch((reason) => {
 						setArchiving(false);
@@ -3133,10 +3168,6 @@ const [deleteTarget, setDeleteTarget] = (0, react.useState)(null);
 																		);
 																	}
 																}
-															},
-															onRefresh: () => {
-																if (typeof refreshSessions === "function")
-																	refreshSessions();
 															},
 															t,
 														}),

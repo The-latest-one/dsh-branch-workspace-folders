@@ -593,16 +593,20 @@ async function listArchivedSessions(
   return result
 }
 
-async function purgeSession(
+async function purgeSessions(
   ctx: AppContext,
   wctx: any,
-  sessionId: string,
+  sessionIds: string[],
   getPersistence: () => DshPersistence | undefined,
 ): Promise<{ purged: number }> {
   const registry = getWorkspaceRegistry(ctx, wctx)
   if (!registry) throw new Error('workspace registry unavailable')
+  const ids = Array.from(new Set(sessionIds.filter((id) => typeof id === 'string' && id.length > 0)))
+  if (ids.length === 0) return { purged: 0 }
   const archivedIds = Array.isArray(registry.archivedSessionIds) ? registry.archivedSessionIds : []
-  if (!archivedIds.includes(sessionId)) throw new Error('只能永久删除已归档的根会话')
+  for (const sessionId of ids) {
+    if (!archivedIds.includes(sessionId)) throw new Error('只能永久删除已归档的根会话')
+  }
   const root = homeSessionsRoot(wctx)
   const locations = await discoverSessionLocations(wctx, root, getPersistence())
   // Purge only needs the durable fork graph from SessionHeader, not full logs.
@@ -623,21 +627,24 @@ async function purgeSession(
   }
   const lineage = lineageItems
   const byId = new Map(lineage.map((item) => [item.sessionId, item.parentId]))
-  // Allow metadata-only purge for archived ids whose log directory is already
-  // missing/corrupt; `collectFamilyIds` still returns the id itself and the
-  // later removal from archivedSessionIds cleans the durable state.
-  const targetParent = byId.get(sessionId)
-  const target = { sessionId, parentId: targetParent }
+  const liveService = ctx.get?.('sessions')
 
   // Permanent delete is intentionally root-only: it removes the whole fork
   // tree. Refuse requests that name a child to avoid deleting an unarchived
-  // root the user may not have intended to destroy.
-  const liveService = ctx.get?.('sessions')
-  if (target.parentId && target.parentId !== sessionId && (byId.has(target.parentId) || !!liveService?.get?.(target.parentId))) {
-    throw new Error('只能删除根会话（该会话存在父会话）')
+  // root the user may not have intended to destroy. Validate all roots before
+  // any mutation so a batch cannot partially fail.
+  for (const sessionId of ids) {
+    const targetParent = byId.get(sessionId)
+    if (targetParent && targetParent !== sessionId && (byId.has(targetParent) || !!liveService?.get?.(targetParent))) {
+      throw new Error('只能删除根会话（该会话存在父会话）')
+    }
   }
 
-  const family = collectFamilyIds(lineage, sessionId)
+  const familySets = ids.map((sessionId) => collectFamilyIds(lineage, sessionId))
+  const family = new Set<string>()
+  for (const set of familySets) {
+    for (const id of set) family.add(id)
+  }
   for (const id of family) {
     if (liveService?.get?.(id)) {
       throw new Error(`会话正在运行或已加载，无法永久删除: ${id}`)
@@ -793,15 +800,24 @@ async function purgeSession(
   }
 }
 
-async function restoreSession(ctx: AppContext, wctx: any, sessionId: string): Promise<void> {
+
+async function restoreSessions(
+  ctx: AppContext,
+  wctx: any,
+  sessionIds: string[],
+): Promise<{ restored: string[] }> {
   const registry = getWorkspaceRegistry(ctx, wctx)
   if (!registry) throw new Error('workspace registry unavailable')
 
+  const ids = Array.from(new Set(sessionIds.filter((id) => typeof id === 'string' && id.length > 0)))
+  if (ids.length === 0) return { restored: [] }
+
+  const remove = new Set(ids)
   const persist = async (state: any) => {
     if (!state) throw new Error('workspace registry state unavailable')
     const next = {
       ...state,
-      archivedSessionIds: (state.archivedSessionIds ?? []).filter((id: string) => id !== sessionId),
+      archivedSessionIds: (state.archivedSessionIds ?? []).filter((id: string) => !remove.has(id)),
     }
     if (registry?.setState) {
       await registry.setState(next)
@@ -825,6 +841,21 @@ async function restoreSession(ctx: AppContext, wctx: any, sessionId: string): Pr
     await persist(state)
   }
   invalidateCaches()
+  return { restored: ids }
+}
+
+async function restoreBranch(
+  ctx: AppContext,
+  wctx: any,
+  sessionId: string,
+  getPersistence: () => DshPersistence | undefined,
+): Promise<{ restored: string[] }> {
+  const sessions = await listArchivedSessions(ctx, wctx, getPersistence)
+  const archivedById = new Map(sessions.map((s) => [s.sessionId, s]))
+  if (!archivedById.has(sessionId)) throw new Error('只能恢复已归档的会话')
+  const family = collectFamilyIds(sessions as any, sessionId)
+  const ids = Array.from(family).filter((id) => archivedById.has(id))
+  return restoreSessions(ctx, wctx, ids)
 }
 
 export function apply(ctx: AppContext): (() => void) | void {
@@ -900,7 +931,25 @@ export function apply(ctx: AppContext): (() => void) | void {
               sendJson(res, 400, { ok: false, error: 'sessionId required' })
               return
             }
-            const data = await purgeSession(ctx, wctx, sessionId, getPersistence)
+            const data = await purgeSessions(ctx, wctx, [sessionId], getPersistence)
+            sendJson(res, 200, { ok: true, data })
+            return
+          }
+
+          if (req.method === 'POST' && pathname === `${API_PREFIX}/purge-batch`) {
+            let sessionIds: string[] = []
+            try {
+              const body = JSON.parse(await readBody(req) || '{}')
+              sessionIds = Array.isArray(body.sessionIds) ? body.sessionIds.filter((id: unknown): id is string => typeof id === 'string') : []
+            } catch {
+              sendJson(res, 400, { ok: false, error: 'invalid JSON body' })
+              return
+            }
+            if (sessionIds.length === 0) {
+              sendJson(res, 400, { ok: false, error: 'sessionIds required' })
+              return
+            }
+            const data = await purgeSessions(ctx, wctx, sessionIds, getPersistence)
             sendJson(res, 200, { ok: true, data })
             return
           }
@@ -918,8 +967,44 @@ export function apply(ctx: AppContext): (() => void) | void {
               sendJson(res, 400, { ok: false, error: 'sessionId required' })
               return
             }
-            await restoreSession(ctx, wctx, sessionId)
+            await restoreSessions(ctx, wctx, [sessionId])
             sendJson(res, 200, { ok: true, data: { restored: sessionId } })
+            return
+          }
+
+          if (req.method === 'POST' && pathname === `${API_PREFIX}/restore-batch`) {
+            let sessionIds: string[] = []
+            try {
+              const body = JSON.parse(await readBody(req) || '{}')
+              sessionIds = Array.isArray(body.sessionIds) ? body.sessionIds.filter((id: unknown): id is string => typeof id === 'string') : []
+            } catch {
+              sendJson(res, 400, { ok: false, error: 'invalid JSON body' })
+              return
+            }
+            if (sessionIds.length === 0) {
+              sendJson(res, 400, { ok: false, error: 'sessionIds required' })
+              return
+            }
+            const data = await restoreSessions(ctx, wctx, sessionIds)
+            sendJson(res, 200, { ok: true, data })
+            return
+          }
+
+          if (req.method === 'POST' && pathname === `${API_PREFIX}/restore-branch`) {
+            let sessionId = ''
+            try {
+              const body = JSON.parse(await readBody(req) || '{}')
+              sessionId = typeof body.sessionId === 'string' ? body.sessionId : ''
+            } catch {
+              sendJson(res, 400, { ok: false, error: 'invalid JSON body' })
+              return
+            }
+            if (!sessionId) {
+              sendJson(res, 400, { ok: false, error: 'sessionId required' })
+              return
+            }
+            const data = await restoreBranch(ctx, wctx, sessionId, getPersistence)
+            sendJson(res, 200, { ok: true, data })
             return
           }
 
