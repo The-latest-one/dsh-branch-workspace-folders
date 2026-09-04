@@ -604,7 +604,7 @@ function deriveFlat(list, archivedSessionIds, orderBy = "updated", filter = "all
 							background: "color-mix(in srgb, var(--dsw-alias-state-business-primary) 12%, transparent)",
 							border: "1px solid color-mix(in srgb, var(--dsw-alias-state-business-primary) 35%, transparent)"
 						},
-						children: uiLabel("当前会话在此工作区", "Current session in this workspace")
+						children: uiLabel("当前工作区 · 当前折叠会话", "Current workspace · collapsed session")
 					}),
 					(0, react_jsx_runtime.jsxs)("span", {
 						className: Rows_module_css_default.rowActions,
@@ -878,7 +878,7 @@ function deriveFlat(list, archivedSessionIds, orderBy = "updated", filter = "all
 		* @param props.t - the browser root's locale seat.
 		* @returns the session row.
 		*/
-		function SessionNodeItem({ node, currentId, now, onOpen, onRename, onFork, onArchive, drag, flat = false, t, depth = 0, collapsed = false, onToggleCollapse, path = [], siblings = [], onJumpSibling, onContextMenu, selectionMode = false, selected = false, onToggleSelect, muted = false, currentRoot = false, currentDescendantTitle }) {
+		function SessionNodeItem({ node, currentId, now, onOpen, onRename, onFork, onArchive, drag, flat = false, t, depth = 0, collapsed = false, onToggleCollapse, path = [], siblings = [], onJumpSibling, onContextMenu, selectionMode = false, selected = false, onToggleSelect, muted = false, isCurrent = false, isCurrentCollapsedAncestor = false }) {
 const row = node;
 const title = displayTitle(node, t);
 const rowSelected = node.id === currentId;
@@ -1020,10 +1020,10 @@ cursor: "help"
 title: node.orphan ? uiLabel("缺失父节点", "Orphan session") : uiLabel("检测到环", "Cycle detected"),
 children: node.orphan ? "⚠" : "↻"
 }),
-					currentRoot && (0, react_jsx_runtime.jsx)("span", {
-						"data-current-root": "true",
+					(isCurrent || isCurrentCollapsedAncestor) && (0, react_jsx_runtime.jsx)("span", {
+						...(isCurrent ? { "data-current-session": "true" } : { "data-current-collapsed": "true" }),
 						role: "status",
-						title: collapsed && currentDescendantTitle ? uiLabel("当前会话：", "Current session: ") + currentDescendantTitle : uiLabel("当前会话在此根下", "Current session under this root"),
+						title: isCurrent ? uiLabel("当前会话", "Current session") : uiLabel("当前工作区 · 当前折叠会话", "Current workspace · collapsed session"),
 						style: {
 							display: "inline-flex",
 							alignItems: "center",
@@ -1043,7 +1043,7 @@ children: node.orphan ? "⚠" : "↻"
 							background: "color-mix(in srgb, var(--dsw-alias-state-business-primary) 12%, transparent)",
 							border: "1px solid color-mix(in srgb, var(--dsw-alias-state-business-primary) 35%, transparent)"
 						},
-						children: collapsed && currentDescendantTitle ? `${uiLabel("当前会话：", "Current: ")}${currentDescendantTitle}` : uiLabel("当前", "Current")
+						children: isCurrent ? uiLabel("当前", "Current") : uiLabel("当前工作区 · 当前折叠会话", "Current workspace · collapsed session")
 					}),
 node.children !== void 0 && node.children.length > 0 && (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Menu, {
 open: branchMenuOpen,
@@ -2021,7 +2021,52 @@ return a.id < b.id ? -1 : 1;
 				}
 				return map;
 			}, [groups, collapsedFor, filterActive]);
-			const currentRootInfo = (0, react.useMemo)(() => {
+			const visibleRowsByGroup = (0, react.useMemo)(() => {
+				const map = new Map();
+				for (const [accountKey, tree] of sessionTreeByGroup) {
+					const group = groups.find(
+						(candidate) => candidate.key === accountKey
+					);
+					if (group === void 0) continue;
+					let treeRows = tree.sessionRows;
+					if (filterActive) {
+						const nodeById = new Map(
+							treeRows.map((row) => [row.node.id, row.node])
+						);
+						const include = new Set();
+						for (const row of treeRows) {
+							if (!group.matchingIds.has(row.node.id)) continue;
+							let current = row.node;
+							include.add(current.id);
+							while (
+								current.parentId !== void 0 &&
+								current.parentId !== current.id &&
+								nodeById.has(current.parentId)
+							) {
+								current = nodeById.get(current.parentId);
+								include.add(current.id);
+								if (current.id === current.parentId) break;
+							}
+						}
+						treeRows = treeRows.filter((row) => include.has(row.node.id));
+					} else if (!expandedSessionGroups.includes(accountKey)) {
+						treeRows = treeRows.slice(0, COLLAPSED_SESSION_LIMIT);
+					}
+					map.set(
+						accountKey,
+						treeRows.map((row) => ({
+							accountKey,
+							node: row.node,
+							depth: row.depth,
+							path: tree.pathByNode.get(row.node.id) || [],
+							siblings: tree.siblingsByNode.get(row.node.id) || [],
+							muted: filterActive && !group.matchingIds.has(row.node.id),
+						}))
+					);
+				}
+				return map;
+			}, [sessionTreeByGroup, groups, expandedSessionGroups, filterActive]);
+			const currentMarkerInfo = (0, react.useMemo)(() => {
 				if (current === void 0) return null;
 				for (const group of groups) {
 					if (!group.expanded) continue;
@@ -2032,16 +2077,29 @@ return a.id < b.id ? -1 : 1;
 					if (ancestors === null) continue;
 					const currentNode = tree.sessionRows.find((row) => row.node.id === current)?.node || group.sessions.find((session) => session.id === current);
 					if (currentNode === void 0) continue;
+					const visibleRows = visibleRowsByGroup.get(group.key) || [];
+					const rowVisible = visibleRows.some((row) => row.node.id === current);
+					let collapsedAnchorId;
+					if (!rowVisible) {
+						const visibleIds = new Set(visibleRows.map((row) => row.node.id));
+						for (let i = ancestors.length - 1; i >= 0; i--) {
+							const ancestorId = ancestors[i];
+							if (visibleIds.has(ancestorId)) {
+								collapsedAnchorId = ancestorId;
+								break;
+							}
+						}
+					}
 					return {
 						accountKey: group.key,
-						rootId: ancestors.length > 0 ? ancestors[0] : current,
-						pathTitles: tree.pathByNode.get(current) || [],
+						currentId: current,
 						currentTitle: displayTitle(currentNode, t),
-						currentId: current
+						rowVisible,
+						collapsedAnchorId
 					};
 				}
 				return null;
-			}, [current, groups, sessionTreeByGroup, filterActive, t]);
+			}, [current, groups, sessionTreeByGroup, filterActive, visibleRowsByGroup, t]);
 			(0, react.useEffect)(() => {
 				if (current === void 0) return;
 				const group = groups.find((candidate) =>
@@ -2104,51 +2162,6 @@ return a.id < b.id ? -1 : 1;
 					setBranchCollapsed(accountKey, id, next);
 				}
 			};
-			const visibleRowsByGroup = (0, react.useMemo)(() => {
-				const map = new Map();
-				for (const [accountKey, tree] of sessionTreeByGroup) {
-					const group = groups.find(
-						(candidate) => candidate.key === accountKey
-					);
-					if (group === void 0) continue;
-					let treeRows = tree.sessionRows;
-					if (filterActive) {
-						const nodeById = new Map(
-							treeRows.map((row) => [row.node.id, row.node])
-						);
-						const include = new Set();
-						for (const row of treeRows) {
-							if (!group.matchingIds.has(row.node.id)) continue;
-							let current = row.node;
-							include.add(current.id);
-							while (
-								current.parentId !== void 0 &&
-								current.parentId !== current.id &&
-								nodeById.has(current.parentId)
-							) {
-								current = nodeById.get(current.parentId);
-								include.add(current.id);
-								if (current.id === current.parentId) break;
-							}
-						}
-						treeRows = treeRows.filter((row) => include.has(row.node.id));
-					} else if (!expandedSessionGroups.includes(accountKey)) {
-						treeRows = treeRows.slice(0, COLLAPSED_SESSION_LIMIT);
-					}
-					map.set(
-						accountKey,
-						treeRows.map((row) => ({
-							accountKey,
-							node: row.node,
-							depth: row.depth,
-							path: tree.pathByNode.get(row.node.id) || [],
-							siblings: tree.siblingsByNode.get(row.node.id) || [],
-							muted: filterActive && !group.matchingIds.has(row.node.id),
-						}))
-					);
-				}
-				return map;
-			}, [sessionTreeByGroup, groups, expandedSessionGroups, filterActive]);
 			const visibleRows = (0, react.useMemo)(() => Array.from(visibleRowsByGroup.values()).flat(), [visibleRowsByGroup]);
 const jumpSibling = (dir, id) => {
 				const row = visibleRows.find((candidate) => candidate.node.id === id);
@@ -2233,8 +2246,6 @@ const jumpSibling = (dir, id) => {
 					console.warn("workspace reorder rejected:", reason);
 				});
 			};
-			const currentPathSummary = currentRootInfo === null ? void 0 : currentRootInfo.pathTitles.length === 0 ? currentRootInfo.currentTitle : `${currentRootInfo.pathTitles[0]} › ${currentRootInfo.currentTitle}`;
-			const currentPathFull = currentRootInfo === null ? void 0 : `${uiLabel("当前路径：", "Current path: ")}${[...currentRootInfo.pathTitles, currentRootInfo.currentTitle].join(" › ")}`;
 			const workspaceDropAtListStart = groups[0]?.workspaceId !== void 0 && workspaceDrag?.over?.id === groups[0].workspaceId && workspaceDrag.over.half === "before";
 			return (0, react_jsx_runtime.jsxs)("div", {
 				className: clsx(WorkspaceBrowser_module_css_default.treeBody, WorkspaceBrowser_module_css_default.wide),
@@ -2242,48 +2253,6 @@ const jumpSibling = (dir, id) => {
 					workspaceDropAtListStart && (0, react_jsx_runtime.jsx)("span", {
 						className: WorkspaceBrowser_module_css_default.listTopDropIndicator,
 						"aria-hidden": "true"
-					}),
-					currentRootInfo !== null && (0, react_jsx_runtime.jsx)("div", {
-						"data-current-path": "true",
-						role: "status",
-						style: {
-							display: "flex",
-							alignItems: "center",
-							gap: 6,
-							padding: "4px 8px",
-							fontSize: 12,
-							lineHeight: "18px",
-							color: "var(--dsw-alias-label-secondary)",
-							borderBottom: "1px solid var(--dsw-alias-border-l2)",
-							whiteSpace: "nowrap",
-							overflow: "hidden",
-							textOverflow: "ellipsis",
-							maxWidth: "100%"
-						},
-						title: currentPathFull,
-						"aria-label": currentPathFull,
-						children: (0, react_jsx_runtime.jsxs)(react_jsx_runtime.Fragment, {
-							children: [
-								(0, react_jsx_runtime.jsx)("span", {
-									style: {
-										flex: "none",
-										width: 6,
-										height: 6,
-										borderRadius: "50%",
-										background: "var(--dsw-alias-state-business-primary)"
-									}
-								}),
-								(0, react_jsx_runtime.jsx)("span", {
-									style: {
-										overflow: "hidden",
-										textOverflow: "ellipsis",
-										whiteSpace: "nowrap",
-										minWidth: 0
-									},
-									children: currentPathSummary
-								})
-							]
-						})
 					}),
 					(0, react_jsx_runtime.jsxs)("div", {
 						className: clsx(WorkspaceBrowser_module_css_default.list, workspaceDropAtListStart && WorkspaceBrowser_module_css_default.listTopDropActive),
@@ -2368,13 +2337,16 @@ const jumpSibling = (dir, id) => {
 									}),
 									sessionRows.map(({ node, depth, muted }) => {
 										const sameGroupDrag = drag !== null && drag.accountKey === group.key;
+										const currentMarker = currentMarkerInfo !== null && currentMarkerInfo.accountKey === group.key ? currentMarkerInfo : null;
+										const isCurrent = currentMarker !== null && node.id === currentMarker.currentId;
+										const isCurrentCollapsedAncestor = currentMarker !== null && !isCurrent && currentMarker.collapsedAnchorId !== void 0 && node.id === currentMarker.collapsedAnchorId;
 										return (0, react_jsx_runtime.jsx)(SessionNodeItem, {
 											node,
 											depth,
 										muted,
 											collapsed: collapsedFor(group.key).has(node.id),
-											currentRoot: currentRootInfo !== null && currentRootInfo.accountKey === group.key && depth === 0 && node.id === currentRootInfo.rootId,
-											currentDescendantTitle: currentRootInfo !== null && currentRootInfo.accountKey === group.key && depth === 0 && node.id === currentRootInfo.rootId && currentRootInfo.currentId !== node.id ? currentRootInfo.currentTitle : void 0,
+											isCurrent,
+											isCurrentCollapsedAncestor,
 											onToggleCollapse: node.children !== void 0 && node.children.length > 0 ? (id) => toggleCollapsedSession(group.key, id) : void 0,
 											currentId: current,
 											now,
