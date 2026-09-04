@@ -1486,18 +1486,10 @@ copiedLabel: t("hover.copied")
 			if (typeof navigator !== "undefined" && /^zh/i.test(navigator.language || "")) return zh;
 			return en;
 		}
-		/** More menu: consolidates filter, batch-select, tree controls. */
-		function MoreMenu({ filter, onPickFilter, onBatchSelect, onCreateWorkspace, groupBy, allGroupsExpanded, onToggleAllGroups, allBranchesCollapsed, onToggleAllBranches, t }) {
+		/** More menu: consolidates batch-select and tree controls. */
+		function MoreMenu({ onBatchSelect, groupBy, allGroupsExpanded, onToggleAllGroups, allBranchesCollapsed, onToggleAllBranches }) {
 			const [open, setOpen] = (0, react.useState)(false);
-			const filterId = filter === "running" ? "filter-running" : filter === "archived" ? "filter-archived" : "filter-all";
 			const items = [
-				{ type: "label", id: "filter-label", text: uiLabel("筛选", "Filter") },
-				{ id: "filter-all", label: uiLabel("全部", "All") },
-				{ id: "filter-running", label: uiLabel("运行中", "Running") },
-				{ id: "filter-archived", label: uiLabel("已归档", "Archived") },
-				{ type: "separator", id: "sep-add" },
-				{ id: "create-workspace", label: t("workspace.add"), icon: (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.IconProjectAddOutline16, { size: 14 }) },
-				{ type: "separator", id: "sep-batch" },
 				{ id: "batch-select", label: uiLabel("批量选择", "Select multiple"), icon: (0, react_jsx_runtime.jsx)("span", { style: { fontSize: 14, lineHeight: 1 }, children: "☑" }) }
 			];
 			if (groupBy !== "flat") {
@@ -1521,14 +1513,9 @@ copiedLabel: t("hover.copied")
 					setOpen(false);
 				},
 				items,
-				selectedIds: [filterId],
 				onSelect: (id) => {
 					setOpen(false);
-					if (id === "filter-all") onPickFilter("all");
-					else if (id === "filter-running") onPickFilter("running");
-					else if (id === "filter-archived") onPickFilter("archived");
-					else if (id === "create-workspace") onCreateWorkspace();
-					else if (id === "batch-select") onBatchSelect();
+					if (id === "batch-select") onBatchSelect();
 					else if (id === "toggle-workspaces") onToggleAllGroups();
 					else if (id === "toggle-branches") onToggleAllBranches();
 				},
@@ -2624,9 +2611,10 @@ copiedLabel: t("hover.copied")
 			const sessionOrderByAccount = useStore((s) => s.sessionOrderByAccount);
 			const sessionUpdatedAtByAccount = useStore((s) => s.sessionUpdatedAtByAccount);
 			const collapsedBranchesByAccount = useStore((s) => s.collapsedBranchesByAccount) || {};
-			const persistedFilter = useStore((s) => s.filter);
 			const [globalBranchToggle, setGlobalBranchToggle] = (0, react.useState)({ version: 0, collapsed: false });
-			const filter = persistedFilter === "running" || persistedFilter === "archived" ? persistedFilter : "all";
+			// The sidebar has no filter UI anymore; keep rendering all sessions even if
+			// an older persisted filter value remains in the store.
+			const filter = "all";
 			const allWorkspaceKeys = (0, react.useMemo)(() => ["", ...workspaces.map((workspace) => workspace.workspaceId)], [workspaces]);
 			const allGroupsExpanded = allWorkspaceKeys.length > 0 && allWorkspaceKeys.every((key) => groupExpansion[key] === true);
 			const branchIdsByAccount = (0, react.useMemo)(() => {
@@ -3135,13 +3123,7 @@ const [deleteTarget, setDeleteTarget] = (0, react.useState)(null);
 												children: [
 													wide &&
 														(0, react_jsx_runtime.jsx)(MoreMenu, {
-															filter,
-															onPickFilter: (id) => {
-																if (typeof actions.setFilter === "function")
-																	actions.setFilter(id);
-															},
 															onBatchSelect: () => setSelectionMode(true),
-															onCreateWorkspace: () => setWsPickerOpen(true),
 															groupBy,
 															allGroupsExpanded,
 															onToggleAllGroups: () => {
@@ -3169,7 +3151,6 @@ const [deleteTarget, setDeleteTarget] = (0, react.useState)(null);
 																	}
 																}
 															},
-															t,
 														}),
 													wide &&
 														(0, react_jsx_runtime.jsx)(ViewOptionsMenu, {

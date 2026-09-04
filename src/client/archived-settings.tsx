@@ -54,6 +54,9 @@ const zh: Record<string, string> = {
   restoreBranch: '恢复整个分支',
   restoredSelected: '已恢复 {n} 个会话。',
   restoredBranch: '已恢复整个分支。',
+  timeSortDefault: '默认',
+  timeSortDesc: '时间 ↓',
+  timeSortAsc: '时间 ↑',
 }
 
 const en: Record<string, string> = {
@@ -86,6 +89,9 @@ const en: Record<string, string> = {
   restoreBranch: 'Restore whole branch',
   restoredSelected: 'Restored {n} sessions.',
   restoredBranch: 'Restored the whole branch.',
+  timeSortDefault: 'Default',
+  timeSortDesc: 'Time ↓',
+  timeSortAsc: 'Time ↑',
 }
 
 const dictionaries: Record<string, Record<string, string>> = { zh, en }
@@ -99,6 +105,23 @@ function formatTime(value: number | undefined): string {
   const d = new Date(value)
   const pad = (v: number) => String(v).padStart(2, '0')
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`
+}
+
+type TimeSortMode = 'none' | 'updatedAt-desc' | 'updatedAt-asc'
+
+function sortTreeByUpdatedAt(nodes: any[], mode: TimeSortMode): any[] {
+  if (mode === 'none') return nodes
+  const factor = mode === 'updatedAt-asc' ? 1 : -1
+  nodes.sort((a: any, b: any) => {
+    const ta = typeof a?.updatedAt === 'number' ? a.updatedAt : Number.NEGATIVE_INFINITY
+    const tb = typeof b?.updatedAt === 'number' ? b.updatedAt : Number.NEGATIVE_INFINITY
+    if (ta !== tb) return (ta - tb) * factor
+    return a.id < b.id ? -1 : a.id > b.id ? 1 : 0
+  })
+  for (const node of nodes) {
+    if (Array.isArray(node.children)) sortTreeByUpdatedAt(node.children, mode)
+  }
+  return nodes
 }
 
 function uiLabel(t: ((key: string, params?: any) => string) | undefined, zhKey: string, enKey: string): string {
@@ -128,6 +151,11 @@ export function ArchivedSettingsSection(props: any): any {
   const [defaultsApplied, setDefaultsApplied] = useState(false)
   const [visibleLimit, setVisibleLimit] = useState(50)
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
+  const [timeSort, setTimeSort] = useState<TimeSortMode>('none')
+  const cycleTimeSort = () => {
+    setTimeSort((current) => (current === 'none' ? 'updatedAt-desc' : current === 'updatedAt-desc' ? 'updatedAt-asc' : 'none'))
+  }
+  const timeSortLabel = timeSort === 'updatedAt-desc' ? label('timeSortDesc') : timeSort === 'updatedAt-asc' ? label('timeSortAsc') : label('timeSortDefault')
 
   const load = async () => {
     setLoading(true)
@@ -204,8 +232,9 @@ export function ArchivedSettingsSection(props: any): any {
   )
   const roots = useMemo(() => {
     const nodes = treeNodes.map((n) => ({ ...n, children: [] as any[] }))
-    return buildSessionTree(nodes)
-  }, [treeNodes])
+    const built = buildSessionTree(nodes)
+    return sortTreeByUpdatedAt(built, timeSort)
+  }, [treeNodes, timeSort])
 
   useEffect(() => {
     if (defaultsApplied || roots.length === 0) return
@@ -357,6 +386,9 @@ export function ArchivedSettingsSection(props: any): any {
       <div className="bwf-archive-header">
         <IconArchiveOutline20 />
         <h2>{label('title')}</h2>
+        <Button size="sm" variant="ghost" onClick={cycleTimeSort} disabled={batchBusy || !!busyId}>
+          {timeSortLabel}
+        </Button>
         {branchRoots.length > 0 ? (
           <Button size="sm" variant="ghost" onClick={allCollapsed ? expandAll : collapseAll}>
             {allCollapsed ? label('expandAll') : label('collapseAll')}
