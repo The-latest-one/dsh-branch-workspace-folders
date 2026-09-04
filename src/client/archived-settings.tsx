@@ -98,6 +98,7 @@ const dictionaries: Record<string, Record<string, string>> = { zh, en }
 
 const NS = 'branch-workspace-archives'
 const ARCHIVED_STYLE_ID = 'dsh-branch-workspace-folders-archives-css'
+const TIME_SORT_STORAGE_KEY = 'dsh.branch-workspace.archives.timeSort'
 let archivedStyleCount = 0
 
 function formatTime(value: number | undefined): string {
@@ -108,6 +109,16 @@ function formatTime(value: number | undefined): string {
 }
 
 type TimeSortMode = 'none' | 'updatedAt-desc' | 'updatedAt-asc'
+
+function readStoredTimeSort(): TimeSortMode {
+  try {
+    if (typeof localStorage === 'undefined') return 'none'
+    const raw = localStorage.getItem(TIME_SORT_STORAGE_KEY)
+    return raw === 'updatedAt-desc' || raw === 'updatedAt-asc' || raw === 'none' ? raw : 'none'
+  } catch {
+    return 'none'
+  }
+}
 
 function sortTreeByUpdatedAt(nodes: any[], mode: TimeSortMode): any[] {
   if (mode === 'none') return nodes
@@ -151,10 +162,17 @@ export function ArchivedSettingsSection(props: any): any {
   const [defaultsApplied, setDefaultsApplied] = useState(false)
   const [visibleLimit, setVisibleLimit] = useState(50)
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
-  const [timeSort, setTimeSort] = useState<TimeSortMode>('none')
+  const [timeSort, setTimeSort] = useState<TimeSortMode>(readStoredTimeSort)
   const cycleTimeSort = () => {
     setTimeSort((current) => (current === 'none' ? 'updatedAt-desc' : current === 'updatedAt-desc' ? 'updatedAt-asc' : 'none'))
   }
+  useEffect(() => {
+    try {
+      if (typeof localStorage !== 'undefined') localStorage.setItem(TIME_SORT_STORAGE_KEY, timeSort)
+    } catch {
+      // localStorage can be unavailable in private/embedded contexts; sorting still works in memory.
+    }
+  }, [timeSort])
   const timeSortLabel = timeSort === 'updatedAt-desc' ? label('timeSortDesc') : timeSort === 'updatedAt-asc' ? label('timeSortAsc') : label('timeSortDefault')
 
   const load = async () => {
