@@ -1,6 +1,6 @@
 {
   "name": "dsh-branch-workspace-folders",
-  "version": "0.1.13",
+  "version": "0.1.14",
   "description": "DSH Web sidebar plugin: group forked sessions under their root session in the left workspace area.",
   "private": false,
   "type": "module",
@@ -30,8 +30,17 @@
     "prepack": "npm run build",
     "prepublishOnly": "npm run build"
   },
-  "dependencies": {},
   "devDependencies": {
+    "@deepseek-ai/cordis": "4.0.2",
+    "@deepseek-ai/dsh-client-locale": "^0.1.2-rc.1",
+    "@deepseek-ai/dsh-client-store": "^0.1.2-rc.1",
+    "@deepseek-ai/dsh-client-ui-primitives": "^0.1.2-rc.1",
+    "@deepseek-ai/dsh-client-ui-settings": "^0.1.2-rc.1",
+    "@deepseek-ai/dsh-client-ui-sidebar": "^0.1.2-rc.1",
+    "@deepseek-ai/dsh-client-ui-slots": "^0.1.2-rc.1",
+    "@deepseek-ai/dsh-client-ui-workspace": "^0.1.2-rc.1",
+    "@deepseek-ai/dsh-scope": "^0.1.2-rc.1",
+    "@deepseek-ai/dsh-session": "^0.1.2-rc.1",
     "@types/node": "^24.0.0",
     "@types/react": "^18.3.0",
     "react": "^18.2.0",
@@ -40,17 +49,17 @@
     "typescript": "^5.9.0"
   },
   "peerDependencies": {
-    "@deepseek-ai/cordis": ">=4.0.1",
-    "@deepseek-ai/dsh-client-runtime": ">=0.0.1-rc.1",
+    "@deepseek-ai/cordis": ">=4.0.2",
+    "@deepseek-ai/dsh-client-locale": ">=0.0.1-rc.1",
+    "@deepseek-ai/dsh-client-store": ">=0.0.1-rc.1",
+    "@deepseek-ai/dsh-client-ui-primitives": ">=0.0.1-rc.1",
+    "@deepseek-ai/dsh-client-ui-settings": ">=0.0.1-rc.1",
+    "@deepseek-ai/dsh-client-ui-sidebar": ">=0.0.1-rc.1",
     "@deepseek-ai/dsh-client-ui-slots": ">=0.0.1-rc.1",
     "@deepseek-ai/dsh-client-ui-workspace": ">=0.0.1-rc.1",
-    "react": ">=18 <20",
-    "react-dom": ">=18 <20",
     "@deepseek-ai/dsh-session": ">=0.1.0-rc.1",
-    "@deepseek-ai/dsh-client-ui-sidebar": ">=0.0.1-rc.1",
-    "@deepseek-ai/dsh-client-ui-primitives": ">=0.0.1-rc.1",
-    "@deepseek-ai/dsh-client-locale": ">=0.0.1-rc.1",
-    "@deepseek-ai/dsh-client-ui-settings": ">=0.0.1-rc.1"
+    "react": ">=18 <20",
+    "react-dom": ">=18 <20"
   },
   "exports": {
     ".": {
@@ -71,11 +80,14 @@
     "client": {
       "platform": "web",
       "inject": [
-        "@deepseek-ai/dsh-client-runtime",
+        "@deepseek-ai/dsh-client-store",
         "@deepseek-ai/dsh-client-ui-slots",
         "@deepseek-ai/dsh-client-ui-sidebar",
         "@deepseek-ai/dsh-client-locale",
         "@deepseek-ai/dsh-client-ui-settings"
+      ],
+      "external": [
+        "@deepseek-ai/dsh-client-ui-workspace/client"
       ]
     }
   },

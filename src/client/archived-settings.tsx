@@ -39,7 +39,10 @@ const zh: Record<string, string> = {
   close: '关闭',
   purgeTitle: '永久删除整个分支？',
   purgeDesc: '将永久删除该根会话及其 {n} 个分支，日志文件不可恢复。',
+  running: '运行中',
   branch: '分支',
+  branch_one: '分支',
+  branch_other: '分支',
   deleted: '已永久删除 {n} 个会话。',
   restored: '已恢复该会话。',
   workError: '操作失败',
@@ -47,8 +50,9 @@ const zh: Record<string, string> = {
   collapseAll: '全部折叠',
   expandBranch: '展开分支',
   collapseBranch: '折叠分支',
-  showMore: '显示更多',
+  showMore: '显示更多 ({n})',
   selectAll: '全选',
+  selectSession: '选择会话',
   restoreSelected: '恢复选中',
   deleteSelected: '删除选中',
   restoreBranch: '恢复整个分支',
@@ -74,7 +78,10 @@ const en: Record<string, string> = {
   close: 'Close',
   purgeTitle: 'Permanently delete this branch?',
   purgeDesc: 'This permanently deletes the root session and its {n} branch sessions. Log files cannot be recovered.',
+  running: 'Running',
   branch: 'branches',
+  branch_one: 'branch',
+  branch_other: 'branches',
   deleted: 'Permanently deleted {n} sessions.',
   restored: 'Session restored.',
   workError: 'Operation failed',
@@ -82,8 +89,9 @@ const en: Record<string, string> = {
   collapseAll: 'Collapse all',
   expandBranch: 'Expand branch',
   collapseBranch: 'Collapse branch',
-  showMore: 'Show more',
+  showMore: 'Show more ({n})',
   selectAll: 'Select all',
+  selectSession: 'Select session',
   restoreSelected: 'Restore selected',
   deleteSelected: 'Delete selected',
   restoreBranch: 'Restore whole branch',
@@ -102,7 +110,7 @@ const TIME_SORT_STORAGE_KEY = 'dsh.branch-workspace.archives.timeSort'
 let archivedStyleCount = 0
 
 function formatTime(value: number | undefined): string {
-  if (!value) return ''
+  if (value == null) return ''
   const d = new Date(value)
   const pad = (v: number) => String(v).padStart(2, '0')
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`
@@ -123,16 +131,16 @@ function readStoredTimeSort(): TimeSortMode {
 function sortTreeByUpdatedAt(nodes: any[], mode: TimeSortMode): any[] {
   if (mode === 'none') return nodes
   const factor = mode === 'updatedAt-asc' ? 1 : -1
-  nodes.sort((a: any, b: any) => {
+  const sorted = [...nodes].sort((a: any, b: any) => {
     const ta = typeof a?.updatedAt === 'number' ? a.updatedAt : Number.NEGATIVE_INFINITY
     const tb = typeof b?.updatedAt === 'number' ? b.updatedAt : Number.NEGATIVE_INFINITY
     if (ta !== tb) return (ta - tb) * factor
     return a.id < b.id ? -1 : a.id > b.id ? 1 : 0
   })
-  for (const node of nodes) {
-    if (Array.isArray(node.children)) sortTreeByUpdatedAt(node.children, mode)
-  }
-  return nodes
+  return sorted.map((node) => ({
+    ...node,
+    children: Array.isArray(node.children) && node.children.length > 0 ? sortTreeByUpdatedAt(node.children, mode) : node.children,
+  }))
 }
 
 function uiLabel(t: ((key: string, params?: any) => string) | undefined, zhKey: string, enKey: string): string {
@@ -175,11 +183,11 @@ export function ArchivedSettingsSection(props: any): any {
   }, [timeSort])
   const timeSortLabel = timeSort === 'updatedAt-desc' ? label('timeSortDesc') : timeSort === 'updatedAt-asc' ? label('timeSortAsc') : label('timeSortDefault')
 
-  const load = async () => {
+  const load = async (signal?: AbortSignal) => {
     setLoading(true)
     setError(null)
     try {
-      const res = await fetch('/branch-workspace/api/archives', { headers: { accept: 'application/json' } })
+      const res = await fetch('/branch-workspace/api/archives', { headers: { accept: 'application/json' }, signal })
       const json = await res.json().catch(() => null)
       if (!json || json.ok !== true) throw new Error(json?.error || label('loadFailed'))
       const nextSessions = Array.isArray(json.data?.sessions) ? json.data.sessions : []
@@ -187,6 +195,7 @@ export function ArchivedSettingsSection(props: any): any {
       const available = new Set(nextSessions.map((s: ArchivedSessionDTO) => s.sessionId))
       setSelectedIds((prev) => new Set(Array.from(prev).filter((id) => available.has(id))))
     } catch (e: any) {
+      if (e?.name === 'AbortError') return
       setError(e?.message || String(e))
     } finally {
       setLoading(false)
@@ -194,7 +203,9 @@ export function ArchivedSettingsSection(props: any): any {
   }
 
   useEffect(() => {
-    load()
+    const ac = new AbortController()
+    load(ac.signal)
+    return () => ac.abort()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
@@ -209,7 +220,7 @@ export function ArchivedSettingsSection(props: any): any {
 .bwf-archive-header{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
 .bwf-archive-header h2{margin:0;font-size:16px;line-height:24px;font-weight:600}
 .bwf-archive-empty{color:var(--dsw-alias-label-secondary);padding:12px 0}
-.bwf-archive-error{color:var(--dsw-alias-danger-fill, #d92d20);padding:8px 0}
+.bwf-archive-error{color:var(--dsw-alias-danger-fill);padding:8px 0}
 .bwf-archive-notice{color:var(--dsw-alias-label-secondary);padding:8px 0}
 .bwf-archive-list{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:2px}
 .bwf-archive-row{display:flex;align-items:center;gap:8px;min-height:32px;padding:4px 8px;border-radius:6px}
@@ -223,6 +234,7 @@ export function ArchivedSettingsSection(props: any): any {
 .bwf-archive-select-all{display:inline-flex;align-items:center;gap:6px;color:var(--dsw-alias-label-secondary);font-size:13px;cursor:pointer}
 .bwf-archive-checkbox{flex:none;width:16px;height:16px;margin:0;accent-color:var(--dsw-alias-state-business-primary)}
 .bwf-archive-show-more{width:100%;margin-top:4px}
+.bwf-archive-running{color:var(--dsw-alias-success-fill)}
 `
       document.head.appendChild(style)
     }
@@ -264,16 +276,27 @@ export function ArchivedSettingsSection(props: any): any {
     setDefaultsApplied(true)
   }, [roots, defaultsApplied])
 
+  useEffect(() => {
+    if (!defaultsApplied) return
+    const valid = new Set(roots.map((r: any) => r.id))
+    setCollapsedIds((prev) => {
+      let changed = false
+      const next = new Set<string>()
+      for (const id of prev) if (valid.has(id)) next.add(id); else changed = true
+      return changed ? next : prev
+    })
+  }, [roots, defaultsApplied])
+
   const rows = useMemo(() => flattenSessionTree(roots, 0, [], new Set(), collapsedIds), [roots, collapsedIds])
   const visibleRows = useMemo(() => rows.slice(0, visibleLimit), [rows, visibleLimit])
   const byId = useMemo(() => new Map(sessions.map((s) => [s.sessionId, s])), [sessions])
 
-  const selectedVisibleRows = visibleRows.filter(({ node }: { node: any }) => selectedIds.has(node.id))
-  const selectedRootRows = selectedVisibleRows.filter(({ node }: { node: any }) => {
+  const selectedRows = rows.filter(({ node }: { node: any }) => selectedIds.has(node.id))
+  const selectedRootRows = selectedRows.filter(({ node }: { node: any }) => {
     const dto = byId.get(node.id)
     return !!dto && !dto.parentKnown
   })
-  const allVisibleSelected = visibleRows.length > 0 && visibleRows.every(({ node }: { node: any }) => selectedIds.has(node.id))
+  const allSelected = rows.length > 0 && rows.every(({ node }: { node: any }) => selectedIds.has(node.id))
   const toggleSelect = (sessionId: string) => {
     setSelectedIds((prev) => {
       const next = new Set(prev)
@@ -283,7 +306,8 @@ export function ArchivedSettingsSection(props: any): any {
     })
   }
   const toggleSelectAll = () => {
-    setSelectedIds(allVisibleSelected ? new Set() : new Set(visibleRows.map(({ node }: { node: any }) => node.id)))
+    if (allSelected) setSelectedIds(new Set())
+    else setSelectedIds(new Set(rows.map(({ node }: { node: any }) => node.id)))
   }
 
   const branchRoots = useMemo(() => roots.filter((root: any) => root.children && root.children.length > 0), [roots])
@@ -297,8 +321,9 @@ export function ArchivedSettingsSection(props: any): any {
     })
   }
   const expandAll = () => {
+    const total = rows.length
     setCollapsedIds(new Set())
-    setVisibleLimit((limit) => Math.max(limit, rows.length))
+    setVisibleLimit((limit) => Math.max(limit, total))
   }
   const collapseAll = () => {
     setCollapsedIds(new Set(branchRoots.map((root: any) => root.id)))
@@ -423,7 +448,7 @@ export function ArchivedSettingsSection(props: any): any {
               <input
                 type="checkbox"
                 className="bwf-archive-checkbox"
-                checked={allVisibleSelected}
+                checked={allSelected}
                 onChange={toggleSelectAll}
                 disabled={batchBusy || !!busyId}
               />
@@ -457,7 +482,7 @@ export function ArchivedSettingsSection(props: any): any {
                   key={node.id}
                   role="treeitem"
                   aria-level={depth + 1}
-                  aria-selected={false}
+                  aria-selected={selectedIds.has(node.id)}
                   aria-expanded={expandable ? !collapsed : undefined}
                   className="bwf-archive-row"
                   style={{ paddingLeft: 8 + depth * 20 }}
@@ -468,14 +493,14 @@ export function ArchivedSettingsSection(props: any): any {
                     checked={selectedIds.has(node.id)}
                     onChange={() => toggleSelect(node.id)}
                     disabled={batchBusy || !!busyId}
-                    aria-label={`${label('selectAll')} ${node.title || node.id}`}
+                    aria-label={`${label('selectSession')}: ${node.title || node.id}`}
                   />
                   {expandable ? (
                     <button
                       type="button"
                       className="bwf-archive-toggle"
-                      aria-label={collapsed ? label('expandBranch') : label('collapseBranch')}
-                      aria-expanded={!collapsed}
+                      tabIndex={-1}
+                      aria-hidden="true"
                       onClick={(e) => {
                         e.stopPropagation()
                         toggleCollapsed(node.id)
@@ -489,12 +514,12 @@ export function ArchivedSettingsSection(props: any): any {
                     {node.title || node.id}
                   </span>
                   {descendantCount > 0 ? (
-                    <span className="bwf-archive-badge" aria-label={`${descendantCount} ${label('branch')}`}>
+                    <span className="bwf-archive-badge" aria-label={`${descendantCount} ${descendantCount===1 ? label('branch_one') : label('branch_other')}`}>
                       <IconBranchOutline16 size={11} />
                       {descendantCount}
                     </span>
                   ) : null}
-                  {node.running ? <span aria-label="running" style={{ color: 'var(--dsw-alias-success-fill, #12b76a)' }}>●</span> : null}
+                  {node.running ? <span aria-label={label('running')} className="bwf-archive-running">●</span> : null}
                   <span className="bwf-archive-time">{formatTime(node.updatedAt)}</span>
                   <span className="bwf-archive-actions">
                     <Button
@@ -535,7 +560,7 @@ export function ArchivedSettingsSection(props: any): any {
           </ul>
           {rows.length > visibleLimit ? (
             <Button className="bwf-archive-show-more" variant="ghost" onClick={showMore}>
-              {label('showMore')} ({rows.length - visibleLimit})
+              {label('showMore', { n: rows.length - visibleLimit })}
             </Button>
           ) : null}
         </>
@@ -543,10 +568,10 @@ export function ArchivedSettingsSection(props: any): any {
 
       <Modal
         open={!!confirm}
-        onClose={() => setConfirm(null)}
+        onClose={() => { if (!busyId) setConfirm(null) }}
         title={label('purgeTitle')}
         closeLabel={label('close')}
-        description={confirm ? label('purgeDesc', { n: confirm.descendantCount }) : undefined}
+        description={confirm ? label('purgeDesc', { n: confirm.descendantCount + 1 }) : undefined}
         footer={
           <>
             <Button variant="ghost" onClick={() => setConfirm(null)} disabled={!!busyId}>
@@ -555,7 +580,7 @@ export function ArchivedSettingsSection(props: any): any {
             <Button
               variant="primary"
               onClick={() => confirm && purge(confirm)}
-              disabled={!confirm || !!busyId}
+              disabled={!confirm || (confirm ? busyId === confirm.sessionId : false)}
             >
               {busyId ? label('purging') : label('purge')}
             </Button>

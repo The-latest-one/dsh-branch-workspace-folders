@@ -53,8 +53,9 @@ export function collectFamilyIds<T extends LineageLike>(
   const rootId = [...family][family.size - 1] ?? currentId
   const queue = [rootId]
   const queued = new Set<string>([rootId])
-  while (queue.length) {
-    const id = queue.shift()!
+  let qi = 0
+  while (qi < queue.length) {
+    const id = queue[qi++]!
     for (const child of childrenOf.get(id) ?? []) {
       if (!queued.has(child)) {
         queued.add(child)

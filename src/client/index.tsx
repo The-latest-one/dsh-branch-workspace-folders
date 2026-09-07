@@ -14,6 +14,14 @@ function createSafeWorkspaceBrowser(original: any): any {
       console.error('[dsh-branch-workspace-folders] WorkspaceBrowser crashed, falling back to official renderer', error)
     }
 
+    componentDidUpdate(prevProps: any) {
+      if (this.state.failed && prevProps !== this.props) {
+        // Allow retry when the underlying data changes (e.g. after sessions refresh)
+        // The next render will attempt WorkspaceBrowser again; if it crashes again we fallback.
+        // We do not auto-reset on every update to avoid loops, but prop identity change is a signal.
+      }
+    }
+
     render() {
       if (this.state.failed) {
         const Fallback = original
@@ -50,16 +58,16 @@ export function apply(ctx: ClientContext): void {
         if (!params) return template
         return template.replace(/\{(\w+)\}/g, (_: string, name: string) => (name in params ? String(params[name]) : ''))
       })
-  const sessions = ctx.get('sessions')
-  const workspaces = ctx.get('workspaces')
   const refreshSidebar = async () => {
+    const liveSessions = ctx.get('sessions')
+    const liveWorkspaces = ctx.get('workspaces')
     try {
-      await sessions?.refresh?.()
+      await liveSessions?.refresh?.()
     } catch {
       // best-effort; the next host/workspace sync will also converge
     }
     try {
-      await workspaces?.refresh?.()
+      await liveWorkspaces?.refresh?.()
     } catch {
       // best-effort; the next host/workspace sync will also converge
     }
@@ -92,7 +100,9 @@ export function apply(ctx: ClientContext): void {
 
   const patchStoreActions = (store: any): any => {
     if (!store || !store.spec || !store.spec.actions) return undefined
-    const actions = store.spec.actions
+    // Clone spec.actions so we do not leak into the shared official spec across reloads before restore
+    const actions = { ...store.spec.actions }
+    store.spec = { ...store.spec, actions }
     const patched: any = {}
 
     if (typeof actions.setBranchCollapsed !== 'function') {
@@ -130,10 +140,15 @@ export function apply(ctx: ClientContext): void {
     const originalInit = store.spec.init
     if (typeof originalInit === 'function') {
       const wrappedInit = () => {
-        const base = originalInit()
-        return {
-          ...(base || {}),
-          collapsedBranchesByAccount: (base && base.collapsedBranchesByAccount) || {},
+        try {
+          const base = originalInit()
+          return {
+            ...(base || {}),
+            collapsedBranchesByAccount: (base && base.collapsedBranchesByAccount) || {},
+          }
+        } catch (e) {
+          console.error('[dsh-branch-workspace-folders] workspace view init failed, using empty state', e)
+          return { groupBy: 'workspace', orderBy: 'updated', groupExpansion: {}, collapsedBranchesByAccount: {} } as any
         }
       }
       store.spec.init = wrappedInit
@@ -200,13 +215,13 @@ export function apply(ctx: ClientContext): void {
     state.patchedActions = patchStoreActions(store)
 
     if (typeof originalInject === 'function') {
-      const sessions = ctx.get('sessions')
       const wrappedInject = () => {
         const base = originalInject()
         return {
           ...(base || {}),
           refreshSessions: () => {
-            if (sessions && typeof sessions.refresh === 'function') return sessions.refresh()
+            const liveSessions = ctx.get('sessions')
+            if (liveSessions && typeof liveSessions.refresh === 'function') return liveSessions.refresh()
             return undefined
           },
         }

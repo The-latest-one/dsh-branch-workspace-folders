@@ -20,73 +20,81 @@ export interface ZstdFrameRange {
   end: number
 }
 
+export interface ZstdFrameScan {
+  frames: ZstdFrameRange[]
+  tornStart?: number
+}
+
 /** Walk a concatenated Zstandard stream and return complete frame ranges.
  *
  * DSH appends frames while a session is live, so the final frame is often
- * incomplete. We therefore treat any trailing partial data as end-of-file and
- * return only complete frames instead of throwing.
+ * incomplete. We therefore treat any trailing partial data as torn (EOF inside
+ * final frame) and return only complete frames instead of throwing. Committed
+ * corruption (bad magic / reserved bits / reserved block type) throws loud,
+ * matching `@deepseek-ai/dsh-session-persistence-jsonl/src/zstd.ts` so callers
+ * do not silently truncate.
  */
 export function scanZstdFrames(buffer: Buffer, maxFrames = Number.POSITIVE_INFINITY): ZstdFrameRange[] {
+  const scan = scanZstdFramesWithTorn(buffer, maxFrames)
+  return scan.frames
+}
+
+export function scanZstdFramesWithTorn(buffer: Buffer, maxFrames = Number.POSITIVE_INFINITY): ZstdFrameScan {
   const frames: ZstdFrameRange[] = []
   let offset = 0
 
   while (offset < buffer.length) {
     const start = offset
-    if (buffer.length - offset < 4) break
-    if (buffer.readUInt32LE(offset) !== ZSTD_MAGIC) break
+    if (buffer.length - offset < 4) return { frames, tornStart: start }
+    if (buffer.readUInt32LE(offset) !== ZSTD_MAGIC) {
+      throw new Error(`corrupt Zstandard session log: invalid frame magic at byte ${offset}`)
+    }
 
     offset += 4
-    if (offset === buffer.length) break
+    if (offset === buffer.length) return { frames, tornStart: start }
 
     const descriptor = buffer.readUInt8(offset)
     offset += 1
-    if ((descriptor & 24) !== 0) break
+    if ((descriptor & 0x18) !== 0) {
+      throw new Error(`corrupt Zstandard session log: reserved frame-header bit at byte ${offset - 1}`)
+    }
 
     const contentSizeFlag = descriptor >>> 6
-    const singleSegment = (descriptor & 32) !== 0
-    const checksum = (descriptor & 4) !== 0
-    const dictionaryFlag = descriptor & 3
+    const singleSegment = (descriptor & 0x20) !== 0
+    const checksum = (descriptor & 0x04) !== 0
+    const dictionaryFlag = descriptor & 0x03
     const dictionaryBytes = dictionaryFlag === 3 ? 4 : dictionaryFlag
-    const contentSizeBytes = contentSizeFlag === 0 ? (singleSegment ? 1 : 0) : (1 << contentSizeFlag)
+    const contentSizeBytes = contentSizeFlag === 0 ? (singleSegment ? 1 : 0) : 1 << contentSizeFlag
     const remainingHeaderBytes = (singleSegment ? 0 : 1) + dictionaryBytes + contentSizeBytes
-    if (buffer.length - offset < remainingHeaderBytes) break
+    if (buffer.length - offset < remainingHeaderBytes) return { frames, tornStart: start }
     offset += remainingHeaderBytes
 
-    let complete = true
     for (;;) {
-      if (buffer.length - offset < 3) {
-        complete = false
-        break
-      }
+      if (buffer.length - offset < 3) return { frames, tornStart: start }
       const blockHeader = buffer.readUIntLE(offset, 3)
       offset += 3
       const lastBlock = (blockHeader & 1) !== 0
-      const blockType = (blockHeader >>> 1) & 3
+      const blockType = (blockHeader >>> 1) & 0x03
       const blockSize = blockHeader >>> 3
-      if (blockType === 3) {
-        complete = false
-        break
+      if (blockType === 0x03) {
+        throw new Error(`corrupt Zstandard session log: reserved block type at byte ${offset - 3}`)
       }
-      const payloadBytes = blockType === 1 ? 1 : blockSize
-      if (buffer.length - offset < payloadBytes) {
-        complete = false
-        break
-      }
+      const payloadBytes = blockType === 0x01 ? 1 : blockSize
+      if (buffer.length - offset < payloadBytes) return { frames, tornStart: start }
       offset += payloadBytes
       if (lastBlock) break
     }
-    if (!complete) break
 
     if (checksum) {
-      if (buffer.length - offset < 4) break
+      if (buffer.length - offset < 4) return { frames, tornStart: start }
       offset += 4
     }
 
     frames.push({ start, end: offset })
-    if (frames.length >= maxFrames) break
+    if (frames.length >= maxFrames) return { frames }
   }
 
-  return frames
+  return { frames }
 }
 /** Parse newline-delimited JSONL text into DSH events (packed rows expanded). */
 export function parseJsonlEvents(text: string): any[] {
@@ -159,24 +167,22 @@ function decompressSessionLogBuffer(buffer: Buffer): string {
 export function readSessionHeader(file: string): any {
   const CHUNK_SIZE = 64 * 1024
   const fd = openSync(file, 'r')
+  let acc = Buffer.alloc(0)
+  let total = 0
+  const scratch = Buffer.alloc(CHUNK_SIZE)
   try {
-    const chunks: Buffer[] = []
-    let total = 0
-    const scratch = Buffer.alloc(CHUNK_SIZE)
     for (;;) {
       const bytes = readSync(fd, scratch, 0, scratch.length, total)
       if (bytes <= 0) break
-      chunks.push(Buffer.from(scratch.subarray(0, bytes)))
+      acc = acc.length === 0 ? Buffer.from(scratch.subarray(0, bytes)) : Buffer.concat([acc, scratch.subarray(0, bytes)])
       total += bytes
-      const buffer = Buffer.concat(chunks)
-      const frames = scanZstdFrames(buffer, 1)
+      const frames = scanZstdFrames(acc, 1)
       if (frames.length > 0) {
-        const plain = zstdDecompressSync(buffer.subarray(frames[0].start, frames[0].end))
+        const plain = zstdDecompressSync(acc.subarray(frames[0].start, frames[0].end))
         const line = plain.toString('utf8').split('\n').map((s) => s.trim()).find(Boolean)
         if (!line) throw new Error(`empty session header: ${file}`)
         return JSON.parse(line)
       }
-      // Safety valve: a valid header frame is tiny; never buffer the whole log.
       if (total > 4 * 1024 * 1024) break
     }
     throw new Error(`empty zstd session log: ${file}`)

@@ -2,6 +2,8 @@ import type { UserConfig } from 'tsdown'
 
 const PLUGIN_ID = 'dsh-branch-workspace-folders'
 
+// PLATFORM implicit (8, no inject) + explicit inject/external per docs/subsystems/client-modules.md § inject vs packages/client/AGENTS.md:75-97
+// Keep in sync with platform.ts PLATFORM_MODULES and package.json dsh.client.inject/external.
 const CLIENT_EXTERNALS = [
   'react',
   'react/jsx-runtime',
@@ -10,9 +12,12 @@ const CLIENT_EXTERNALS = [
   'cordis',
   '@deepseek-ai/dsh-client-ui-slots',
   '@deepseek-ai/dsh-client-ui-sidebar',
-  '@deepseek-ai/dsh-client-runtime/client',
+  '@deepseek-ai/dsh-client-store',
+  // Workspace client subpath: vendored CSS tags reference this package; keep external even though no direct import
   '@deepseek-ai/dsh-client-ui-workspace/client',
   '@deepseek-ai/dsh-client-ui-primitives',
+  '@deepseek-ai/dsh-client-locale',
+  '@deepseek-ai/dsh-client-ui-settings',
 ]
 
 const clientBundle: UserConfig = {
