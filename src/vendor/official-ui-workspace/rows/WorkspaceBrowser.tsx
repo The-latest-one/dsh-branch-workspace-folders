@@ -539,7 +539,15 @@ function SessionTree({
   const currentMarkerInfo = useMemo(() => {
     if (current === undefined) return null
     for (const group of groups) {
-      if (!group.expanded) continue
+      // Whole workspace collapsed: a collapsed group renders no session rows,
+      // so when it holds the active session the marker rides on the group
+      // header (deriveGroups sets `containsCurrent` for collapsed groups too).
+      if (!group.expanded) {
+        if (group.containsCurrent) {
+          return { accountKey: group.key, currentId: current, rowVisible: false, collapsedGroup: true }
+        }
+        continue
+      }
       const tree = sessionTreeByGroup.get(group.key)
       if (tree === undefined) continue
       const ancestors = findSessionAncestors(tree.sessionTree, current)
@@ -804,6 +812,7 @@ function SessionTree({
                 group={group}
                 home={home}
                 t={t}
+                currentCollapsed={currentMarker !== null && currentMarker.collapsedGroup === true}
                 onToggle={() => {
                   if (group.expanded) {
                     setExpandedSessionGroups(keys => keys.filter(key => key !== group.key))
@@ -1536,7 +1545,10 @@ export function WorkspaceBrowser({
             </div>
           </div>
         )}
-        <div className={clsx(css.headerActions, wide && searchExpanded && css.headerActionsHidden)}>
+        <div
+          className={clsx(css.headerActions, wide && searchExpanded && css.headerActionsHidden)}
+          style={selectionMode ? { maxWidth: 'none' } : undefined}
+        >
           {wide && selectionMode ? (
             <div style={{ display: 'inline-flex', alignItems: 'center', gap: 8, flex: 'none' }}>
               <span style={{

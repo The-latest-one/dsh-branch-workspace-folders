@@ -111,7 +111,7 @@ function rowHalf(e: { clientY: number; currentTarget: HTMLElement }): 'before' |
  * @param props.t - the browser root's locale seat.
  * @returns the row element.
  */
-export function ProjectRowItem({ group, onToggle, onCreate, actions, drag, home, t }: {
+export function ProjectRowItem({ group, onToggle, onCreate, actions, drag, home, t, currentCollapsed }: {
   group: GroupNode
   onToggle: () => void
   onCreate: () => void
@@ -122,6 +122,8 @@ export function ProjectRowItem({ group, onToggle, onCreate, actions, drag, home,
   /** Host account home; POSIX home-rooted hover paths display as `~`. */
   home?: string | undefined
   t: RowTranslate
+  /** The whole group is collapsed and hides the active session. */
+  currentCollapsed?: boolean | undefined
 }) {
   const row = group
   // The ungrouped bucket has no workspace title: its label is dictionary copy.
@@ -157,6 +159,7 @@ export function ProjectRowItem({ group, onToggle, onCreate, actions, drag, home,
       <span className={css.projectText}>
         <span className={css.title}>{label}</span>
       </span>
+      {currentCollapsed && <CollapsedCurrentCapsule />}
       <span className={css.rowActions}>
         {actions !== undefined && (
           <Menu
@@ -213,6 +216,40 @@ export function ProjectRowItem({ group, onToggle, onCreate, actions, drag, home,
       copyLabel={t('copy')}
       copiedLabel={t('hover.copied')}
     />
+  )
+}
+
+/** Current-session marker on a collapsed workspace header: the active session is
+ *  hidden behind this whole group, so the pill rides on the group header row
+ *  (mirrors the collapsed-branch pill on {@link SessionNodeItem}). */
+function CollapsedCurrentCapsule() {
+  return (
+    <span
+      data-current-collapsed="true"
+      role="status"
+      title={uiLabel('当前工作区 · 当前折叠会话', 'Current workspace · collapsed session')}
+      style={{
+        display: 'inline-flex',
+        alignItems: 'center',
+        flex: '0 1 auto',
+        marginLeft: 6,
+        padding: '0 6px',
+        height: 18,
+        borderRadius: 999,
+        fontSize: 11,
+        lineHeight: 1,
+        fontWeight: 500,
+        whiteSpace: 'nowrap',
+        maxWidth: 160,
+        overflow: 'hidden',
+        textOverflow: 'ellipsis',
+        color: 'var(--dsw-alias-state-business-primary)',
+        background: 'color-mix(in srgb, var(--dsw-alias-state-business-primary) 12%, transparent)',
+        border: '1px solid color-mix(in srgb, var(--dsw-alias-state-business-primary) 35%, transparent)',
+      }}
+    >
+      {uiLabel('当前会话', 'Current')}
+    </span>
   )
 }
 
