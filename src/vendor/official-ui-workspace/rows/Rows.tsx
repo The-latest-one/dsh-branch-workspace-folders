@@ -649,7 +649,7 @@ export function SessionNodeItem({
         >
           {isCurrent
             ? uiLabel('当前', 'Current')
-            : uiLabel('当前工作区 · 当前折叠会话', 'Current workspace · collapsed session')}
+            : uiLabel('当前会话', 'Current')}
         </span>
       )}
       {branchChildren.length > 0 && (
