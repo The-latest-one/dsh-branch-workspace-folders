@@ -13,8 +13,6 @@ const CLIENT_EXTERNALS = [
   '@deepseek-ai/dsh-client-ui-slots',
   '@deepseek-ai/dsh-client-ui-sidebar',
   '@deepseek-ai/dsh-client-store',
-  // Workspace client subpath: vendored CSS tags reference this package; keep external even though no direct import
-  '@deepseek-ai/dsh-client-ui-workspace/client',
   '@deepseek-ai/dsh-client-ui-primitives',
   '@deepseek-ai/dsh-client-locale',
   '@deepseek-ai/dsh-client-ui-settings',

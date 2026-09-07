@@ -6,7 +6,7 @@ test('built client retains branch-tree and search-load-more capabilities', () =>
   const client = readFileSync(new URL('../lib/client.js', import.meta.url), 'utf8')
   assert.match(client, /buildSessionTree/)
   assert.match(client, /flattenSessionTree/)
-  assert.match(client, /search\.loadMore/)
+  assert.match(client, /search\.hasMore/)
   assert.match(client, /treeRowCount/)
   assert.match(client, /outside its branch parent/)
 })

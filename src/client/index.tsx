@@ -23,11 +23,12 @@ function createSafeWorkspaceBrowser(original: any): any {
     }
 
     render() {
+      const props = this.props as any
       if (this.state.failed) {
-        const Fallback = original
-        return Fallback ? <Fallback {...this.props} /> : null
+        const Fallback = original as any
+        return Fallback ? <Fallback {...props} /> : null
       }
-      return <WorkspaceBrowser {...this.props} />
+      return <WorkspaceBrowser {...props} />
     }
   }
 }
@@ -86,27 +87,37 @@ export function apply(ctx: ClientContext): void {
   // child declaration (needed for the framework to pass `renderSlot` to
   // WorkspaceBrowser), so we cannot register a parallel entry that re-declares
   // that child. Instead we shadow the official entry in place:
-  //   - replace its renderer with our vendored WorkspaceBrowser,
-  //   - patch the already-registered official store handle to add the
-  //     branch-collapse actions/state that the official store lacks,
-  //   - wrap its inject to add refreshSessions(),
+  //   - replace its renderer with our vendored WorkspaceBrowser (official
+  //     0.1.2-rc.1 baseline + branch features),
+  //   - patch the already-registered official store handle IN PLACE: the
+  //     renderer pins store handles by identity at register() time
+  //     (resolveStore looks the live `entry.store` up in its private
+  //     handle map and throws for unregistered handles), so replacing
+  //     `entry.store` with our own handle would kill the whole region.
+  //     The engine's create() reads the spec object captured in the
+  //     defineStore closure, so patching must mutate the spec's own
+  //     properties (actions/init/persist) rather than swapping the
+  //     handle.spec reference.
   //   - restore everything only while we still own them.
-  const replaced = new Map<any, { original: any; originalInject?: any; wrappedInject?: any; swappedComponent?: any; patchedActions?: any; patchedInit?: any }>()
+  const replaced = new Map<any, {
+    original: any
+    swappedComponent?: any
+    restoreSpec?: () => void
+  }>()
 
   const isOfficialEntry = (candidate: any): boolean => !!candidate && (
     candidate.children?.['sidebar.workspaces.directoryFlow'] ||
     candidate.options?.children?.['sidebar.workspaces.directoryFlow']
   )
 
-  const patchStoreActions = (store: any): any => {
+  const patchStoreSpec = (store: any): (() => void) | undefined => {
     if (!store || !store.spec || !store.spec.actions) return undefined
-    // Clone spec.actions so we do not leak into the shared official spec across reloads before restore
-    const actions = { ...store.spec.actions }
-    store.spec = { ...store.spec, actions }
-    const patched: any = {}
+    const spec = store.spec
+    const actions = spec.actions
+    const added: Array<{ key: string; fn: any }> = []
 
     if (typeof actions.setBranchCollapsed !== 'function') {
-      actions.setBranchCollapsed = (d: any, accountKey: string, nodeId: string, collapsed: boolean) => {
+      const fn = (d: any, accountKey: string, nodeId: string, collapsed: boolean) => {
         if (!d.collapsedBranchesByAccount) d.collapsedBranchesByAccount = {}
         const list = Array.isArray(d.collapsedBranchesByAccount[accountKey])
           ? d.collapsedBranchesByAccount[accountKey].slice()
@@ -119,11 +130,12 @@ export function apply(ctx: ClientContext): void {
         }
         d.collapsedBranchesByAccount[accountKey] = list
       }
-      patched.setBranchCollapsed = actions.setBranchCollapsed
+      actions.setBranchCollapsed = fn
+      added.push({ key: 'setBranchCollapsed', fn })
     }
 
     if (typeof actions.setAllBranchesCollapsed !== 'function') {
-      actions.setAllBranchesCollapsed = (d: any, accountKey: string, nodeIds: string[], collapsed: boolean) => {
+      const fn = (d: any, accountKey: string, nodeIds: string[], collapsed: boolean) => {
         if (!d.collapsedBranchesByAccount) d.collapsedBranchesByAccount = {}
         const prev = new Set(Array.isArray(d.collapsedBranchesByAccount[accountKey])
           ? d.collapsedBranchesByAccount[accountKey]
@@ -134,54 +146,43 @@ export function apply(ctx: ClientContext): void {
         }
         d.collapsedBranchesByAccount[accountKey] = Array.from(prev)
       }
-      patched.setAllBranchesCollapsed = actions.setAllBranchesCollapsed
+      actions.setAllBranchesCollapsed = fn
+      added.push({ key: 'setAllBranchesCollapsed', fn })
     }
 
-    const originalInit = store.spec.init
-    if (typeof originalInit === 'function') {
-      const wrappedInit = () => {
-        try {
-          const base = originalInit()
-          return {
-            ...(base || {}),
-            collapsedBranchesByAccount: (base && base.collapsedBranchesByAccount) || {},
-          }
-        } catch (e) {
-          console.error('[dsh-branch-workspace-folders] workspace view init failed, using empty state', e)
-          return { groupBy: 'workspace', orderBy: 'updated', groupExpansion: {}, collapsedBranchesByAccount: {} } as any
+    const originalInit = spec.init
+    const patchedInit = () => {
+      try {
+        const base = originalInit()
+        return {
+          ...(base || {}),
+          collapsedBranchesByAccount: (base && base.collapsedBranchesByAccount) || {},
         }
+      } catch (error) {
+        console.error('[dsh-branch-workspace-folders] workspace view init failed, using empty state', error)
+        return { groupBy: 'workspace', orderBy: 'updated', groupExpansion: {}, collapsedBranchesByAccount: {} } as any
       }
-      store.spec.init = wrappedInit
-      patched.init = originalInit
-      patched.wrappedInit = wrappedInit
     }
+    spec.init = patchedInit
+    const originalPersist = spec.persist
+    // Keep the v0.1.14 persist key: existing users keep their view state
+    // (the official 0.1.2-rc.1 renamed it to v5, which would discard it).
+    spec.persist = 'dsh.workspace.view.v6'
 
-    return patched
-  }
-
-  const restoreStorePatch = (store: any, patched: any) => {
-    if (!store || !store.spec || !store.spec.actions || !patched) return
-    if (patched.setBranchCollapsed && store.spec.actions.setBranchCollapsed === patched.setBranchCollapsed) {
-      delete store.spec.actions.setBranchCollapsed
+    return () => {
+      for (const { key, fn } of added) {
+        if (actions[key] === fn) delete actions[key]
+      }
+      if (spec.init === patchedInit) spec.init = originalInit
+      if (spec.persist === 'dsh.workspace.view.v6') spec.persist = originalPersist
     }
-    if (patched.setAllBranchesCollapsed && store.spec.actions.setAllBranchesCollapsed === patched.setAllBranchesCollapsed) {
-      delete store.spec.actions.setAllBranchesCollapsed
-    }
-    if (patched.wrappedInit && store.spec.init === patched.wrappedInit) {
-      store.spec.init = patched.init
-    }
-    // If another plugin wrapped `init` after us, leave the wrapper in place.
   }
 
   const restoreEntry = (entry: any, state: any) => {
-    if (state.swappedComponent !== undefined && entry.component === state.swappedComponent) entry.component = state.original
-    else if (entry.component === WorkspaceBrowser) entry.component = state.original
-    const currentInject = entry.inject ?? entry.options?.inject
-    if (state.wrappedInject !== undefined && currentInject === state.wrappedInject) {
-      if (entry.inject === state.wrappedInject) entry.inject = state.originalInject
-      if (entry.options && entry.options.inject === state.wrappedInject) entry.options.inject = state.originalInject
+    if (state.swappedComponent !== undefined && entry.component === state.swappedComponent) {
+      entry.component = state.original
     }
-    if (state.store && state.patchedActions) restoreStorePatch(state.store, state.patchedActions)
+    if (state.restoreSpec !== undefined) state.restoreSpec()
   }
 
   const restoreReplaced = () => {
@@ -203,35 +204,18 @@ export function apply(ctx: ClientContext): void {
     }
 
     const official = entries.find(isOfficialEntry)
-    if (!official || replaced.has(official) || official.component === WorkspaceBrowser) return
+    if (!official || replaced.has(official)) return
 
     const original = official.component
-    const originalInject = official.inject ?? official.options?.inject
     const store = official.store ?? official.options?.store
     const SafeWorkspaceBrowser = createSafeWorkspaceBrowser(original)
-    const state: any = { original, originalInject, swappedComponent: SafeWorkspaceBrowser, store }
-
+    const restoreSpec = patchStoreSpec(store)
     official.component = SafeWorkspaceBrowser
-    state.patchedActions = patchStoreActions(store)
-
-    if (typeof originalInject === 'function') {
-      const wrappedInject = () => {
-        const base = originalInject()
-        return {
-          ...(base || {}),
-          refreshSessions: () => {
-            const liveSessions = ctx.get('sessions')
-            if (liveSessions && typeof liveSessions.refresh === 'function') return liveSessions.refresh()
-            return undefined
-          },
-        }
-      }
-      if (typeof official.inject === 'function') official.inject = wrappedInject
-      if (official.options && typeof official.options.inject === 'function') official.options.inject = wrappedInject
-      state.wrappedInject = wrappedInject
-    }
-
-    replaced.set(official, state)
+    replaced.set(official, {
+      original,
+      swappedComponent: SafeWorkspaceBrowser,
+      restoreSpec,
+    })
   }
 
   ctx.effect(() => {

@@ -27,6 +27,7 @@
     "src"
   ],
   "exclude": [
-    "src/client"
+    "src/client",
+    "src/vendor/official-ui-workspace"
   ]
 }
