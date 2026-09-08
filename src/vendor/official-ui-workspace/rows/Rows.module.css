@@ -145,18 +145,12 @@
 }
 
 
-/* Project leading slot: folder glyph plus an always-visible expand arrow,
-   in the same accent family as the session branch toggle. */
-.projectRow .chevron {
-  display: inline-flex;
-}
+/* Project leading slot: folder by default, expand arrow on row hover. */
+.projectRow .chevron { display: none; }
+.projectRow:hover .chevron { display: inline-flex; }
+.projectRow:hover .folder { display: none; }
 
-.projectRow:hover .chevron {
-  color: var(--dsw-alias-label-primary);
-}
-
-/* Expand arrow (filled triangle / chevron): points right closed,
-   rotates to point down open. */
+/* Expand arrow (filled triangle): points right closed, rotates to point down open. */
 .arrow {
   transition: transform 150ms var(--ds-ease-in-out);
 }
@@ -359,40 +353,10 @@
   color: var(--dsw-alias-label-primary);
 }
 
-/* Tree indicators share the secondary label grey (one step above the
-   folder glyph's tertiary) so expand affordances read at a glance. */
+/* Chevrons ride the caption grey (#ADB2B8); the folder glyph stays one step
+   darker (tertiary, #81858C) per the cell spec. */
 .chevron {
-  color: var(--dsw-alias-label-secondary);
-}
-
-/* Branch expand toggle: 20px hit area with hover/focus feedback, same
-   accent family as the workspace-row arrow. */
-.branchToggle {
-  flex: none;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 20px;
-  height: 20px;
-  padding: 0;
-  border: none;
-  background: none;
-  border-radius: 6px;
-  color: var(--dsw-alias-label-secondary);
-  cursor: pointer;
-  transition:
-    color 150ms var(--ds-ease-in-out),
-    background 150ms var(--ds-ease-in-out);
-}
-
-.branchToggle:hover {
-  color: var(--dsw-alias-label-primary);
-  background: var(--dsw-alias-interactive-bg-hover);
-}
-
-.branchToggle:focus-visible {
-  outline: 2px solid var(--dsw-alias-state-business-primary);
-  outline-offset: 1px;
+  color: var(--dsw-alias-label-caption);
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -427,16 +391,10 @@
   opacity: 0.62;
 }
 
-/* Fork badge: tabular numerals so the descendant count does not jitter;
-   rides the same secondary accent as the branch toggle. */
+/* Fork badge: tabular numerals so the descendant count does not jitter. */
 .branchBadge {
   min-width: 24px !important;
   min-height: 22px !important;
   padding: 0 6px !important;
   font-variant-numeric: tabular-nums;
-  color: var(--dsw-alias-label-secondary);
-}
-
-.branchBadge:hover {
-  color: var(--dsw-alias-label-primary);
 }
