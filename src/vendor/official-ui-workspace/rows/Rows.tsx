@@ -9,7 +9,7 @@ import { useEffect, useRef, useState } from 'react'
 import clsx from 'clsx'
 import {
   HoverCard, IconAlarmClockOutline16, IconArchiveOutline20, IconBranchOutline16,
-  IconChevronDownOutline14, IconChevronRightOutline14, IconEditOutline16,
+  IconChevronRightOutline14, IconEditOutline16,
   IconEllipsisOutline16, IconFolderClose16, IconFolderOpen16, IconPlusOutline16,
   IconTrashOutline16, IconTriangleRightFill14, Menu, relativeTime, StateDot,
 } from '@deepseek-ai/dsh-client-ui-primitives'
@@ -607,25 +607,15 @@ export function SessionNodeItem({
       {onToggleCollapse !== undefined && branchChildren.length > 0 && (
         <button
           type="button"
+          className={css.branchToggle}
           aria-label={collapsed ? uiLabel('展开分支', 'Expand branch') : uiLabel('折叠分支', 'Collapse branch')}
           aria-expanded={!collapsed}
           onClick={(e) => { e.stopPropagation(); onToggleCollapse(node.id) }}
-          style={{
-            display: 'inline-flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            flex: 'none',
-            width: 20,
-            height: 20,
-            padding: 0,
-            border: 'none',
-            background: 'none',
-            color: 'var(--dsw-alias-label-tertiary)',
-            cursor: 'pointer',
-            borderRadius: 6,
-          }}
         >
-          {collapsed ? <IconChevronRightOutline14 /> : <IconChevronDownOutline14 />}
+          <IconChevronRightOutline14
+            size={16}
+            className={clsx(css.arrow, !collapsed && css.arrowOpen)}
+          />
         </button>
       )}
       {/* Pending interaction and own or descendant activity outrank the
@@ -715,7 +705,6 @@ export function SessionNodeItem({
                 flex: 'none',
                 minWidth: 24,
                 minHeight: 22,
-                color: 'var(--dsw-alias-label-tertiary)',
                 fontSize: '12px',
                 lineHeight: '17px',
                 padding: '0 6px',
