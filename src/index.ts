@@ -230,6 +230,31 @@ function sessionFilesSignature(files: SessionFileRef[]): string {
   return `${files.length}:${maxMtimeMs}:${sumMtimeMs}`
 }
 
+/**
+ * Resolve the highest-versioned session file in a session directory
+ * (e.g. session.v3.jsonl.zstd > session.v2.jsonl.zstd > session.jsonl.zstd).
+ */
+function pickLatestSessionFile(sessionDir: string): string | undefined {
+  let entries: string[] = []
+  try {
+    entries = readdirSync(sessionDir)
+  } catch {
+    return undefined
+  }
+  let bestFile: string | undefined
+  let bestVersion = -1
+  for (const name of entries) {
+    const match = /^session(?:\.v(\d+))?\.jsonl\.zstd$/.exec(name)
+    if (!match) continue
+    const version = match[1] !== undefined ? parseInt(match[1], 10) : 0
+    if (version > bestVersion) {
+      bestVersion = version
+      bestFile = join(sessionDir, name)
+    }
+  }
+  return bestFile
+}
+
 /** List session log paths without reading any session header. */
 function listSessionFiles(root: string): SessionFileRef[] {
   const files: SessionFileRef[] = []
@@ -249,8 +274,9 @@ function listSessionFiles(root: string): SessionFileRef[] {
       continue
     }
     for (const sessionId of entries) {
-      const file = join(workspaceDir, sessionId, 'session.jsonl.zstd')
-      if (!existsSync(file)) continue
+      const sessionDir = join(workspaceDir, sessionId)
+      const file = pickLatestSessionFile(sessionDir)
+      if (!file) continue
       files.push({ sessionId, workspace, file })
     }
   }

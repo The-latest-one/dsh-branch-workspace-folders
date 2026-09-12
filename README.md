@@ -5,6 +5,10 @@ DSH Web 左侧工作区/会话栏插件：在官方 `@deepseek-ai/dsh-client-ui-
 ## 特性
 
 - 复用官方 WorkspaceBrowser 渲染与 CSS，保持原生 DSH Web 观感。
+- 深度适配 DeepSeek Harness `v0.1.5-rc.2` 及以上版本：
+  - 完美支持 V3 格式持久化文件（`session.v3.jsonl.zstd`）并向下兼容 V2/V0 旧版；
+  - 对齐 `usePanelInfo` 运行时契约，全局面板（设置、文件等）激活时自动抑制会话高亮；
+  - 遵循超级模组标准生产线（`scripts/build.sh`、`build:client`），支持运行时热注入与热重载。
 - 按 `parentId` 将 forked sessions 折叠到根会话下：
   - 根会话显示分支数 badge；
   - 支持单分支折叠/展开；
@@ -79,12 +83,32 @@ pnpm install --offline --no-frozen-lockfile
 
 重启 DSH Web 后生效。
 
-## 开发
+## 开发与构建
 
 ```bash
+# 类型检查
 npm run typecheck
+
+# 编译 Host 与打包 Client
 npm run build
+
+# 执行单测
 npm test
+
+# 打包 tgz 产物
+npm run pack
+```
+
+### 超级模组热注入（开发免重启）
+
+如当前 DSH 环境装有 `dsh-super-injector`，可直接在对答中或命令行进行运行时热注入：
+
+```bash
+# 运行时直接挂载（免重启）
+dev_inject_plugin {"dir": "/path/to/dsh-branch-workspace-folders"}
+
+# 修改代码后热重载
+dev_reload_package {"packageName": "dsh-branch-workspace-folders"}
 ```
 
 ## 注意

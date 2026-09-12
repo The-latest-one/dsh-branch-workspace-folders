@@ -152,6 +152,10 @@ export type WorkspaceBrowserProps =
   & Omit<WorkspaceBrowserInjected, 'hooks'>
   & PropsHooks<WorkspaceBrowserInjected['hooks']>
   & PropsLocale<'workspace'>
+  & {
+    /** Panel info selector hook (present in DSH 0.1.5-rc.2+ to detect active sidebar/main panels). */
+    usePanelInfo?: <T = any>(selector: (info: { activePanelId: string | null }) => T) => T
+  }
 
 /**
  * Picker-private injected share. Pick semantics remain in the owner's onPick

@@ -298,7 +298,7 @@ function workspaceGroupHalf(e: { clientY: number; currentTarget: HTMLElement }):
 
 type SessionTreeProps = Pick<
   WorkspaceBrowserProps,
-  'useSessions' | 'useSessionPendingInteraction' | 'startSession' | 'open' | 'forkSession'
+  'useSessions' | 'useSessionPendingInteraction' | 'usePanelInfo' | 'startSession' | 'open' | 'forkSession'
   | 'insertWorkspaceBefore' | 'insertSessionBefore' | 't'
 > & {
   /** Host account home for POSIX hover-path abbreviation. */
@@ -352,7 +352,7 @@ const EMPTY_COLLAPSED_SET: ReadonlySet<string> = new Set<string>()
 
 /** The scrolling session tree; unmounting drops the sessions subscription and expand-all state. */
 function SessionTree({
-  useSessions, useSessionPendingInteraction, startSession, open, forkSession, workspaces, archivedSessionIds,
+  useSessions, useSessionPendingInteraction, usePanelInfo, startSession, open, forkSession, workspaces, archivedSessionIds,
   workspaceReady,
   onRenameRequest, onDeleteRequest, onSessionRename, onSessionArchive,
   insertWorkspaceBefore, insertSessionBefore, orderBy,
@@ -362,9 +362,10 @@ function SessionTree({
   collapsedBranchesByAccount, setBranchCollapsed, setAllBranchesCollapsed,
   selectionMode, selectedIds, onToggleSelect,
 }: SessionTreeProps) {
+  const panelActive = typeof usePanelInfo === 'function' ? usePanelInfo(info => info.activePanelId !== null) : false
   const list = useSessions(s => s)
   const pendingInteractions = useSessionPendingInteraction(s => s)
-  const current = list.current
+  const current = panelActive ? undefined : list.current
   const revealGroup = revealSessionId === undefined || !workspaceReady
     ? undefined
     : owningGroupKey(workspaces, revealSessionId)
@@ -923,7 +924,7 @@ function SessionTree({
 }
 /** The flat "In one list" body: every session is one draggable top-level row. */
 function FlatList({
-  useSessions, useSessionPendingInteraction, open, forkSession, onSessionRename, onSessionArchive,
+  useSessions, useSessionPendingInteraction, usePanelInfo, open, forkSession, onSessionRename, onSessionArchive,
   archivedSessionIds,
   orderBy, sessionOrderByAccount, sessionUpdatedAtByAccount, syncSessionOrderAccount, setSessionOrder,
   revealSessionId, onSessionRevealed, selectionMode, selectedIds, onToggleSelect, t,
@@ -931,6 +932,7 @@ function FlatList({
   SessionTreeProps,
   | 'useSessions'
   | 'useSessionPendingInteraction'
+  | 'usePanelInfo'
   | 'open'
   | 'forkSession'
   | 'onSessionRename'
@@ -948,7 +950,9 @@ function FlatList({
   | 'onToggleSelect'
   | 't'
 >) {
+  const panelActive = typeof usePanelInfo === 'function' ? usePanelInfo(info => info.activePanelId !== null) : false
   const list = useSessions(s => s)
+  const current = panelActive ? undefined : list.current
   const pendingInteractions = useSessionPendingInteraction(s => s)
   const baseRows = useMemo(
     () => deriveFlat(list, archivedSessionIds, pendingInteractions),
@@ -1014,7 +1018,7 @@ function FlatList({
             <SessionNodeItem
               key={node.id}
               node={node}
-              currentId={list.current}
+              currentId={current}
               now={now}
               onOpen={open}
               onRename={onSessionRename}
@@ -1067,6 +1071,7 @@ interface RemoteSearchState {
 function SearchResults({
   useSessions,
   useSessionPendingInteraction,
+  usePanelInfo,
   open,
   workspaces,
   archivedSessionIds,
@@ -1074,14 +1079,16 @@ function SearchResults({
   remote,
   resultLimit,
   t,
-}: Pick<SessionTreeProps, 'useSessions' | 'useSessionPendingInteraction' | 'open' | 't'> & {
+}: Pick<SessionTreeProps, 'useSessions' | 'useSessionPendingInteraction' | 'usePanelInfo' | 'open' | 't'> & {
   workspaces: readonly WorkspaceView[]
   archivedSessionIds: readonly SessionNode['id'][]
   query: string
   remote: RemoteSearchState
   resultLimit: number
 }) {
+  const panelActive = typeof usePanelInfo === 'function' ? usePanelInfo(info => info.activePanelId !== null) : false
   const list = useSessions(s => s)
+  const current = panelActive ? undefined : list.current
   const pendingInteractions = useSessionPendingInteraction(s => s)
   const currentRemote = remote.query === query
     ? remote
@@ -1109,7 +1116,7 @@ function SearchResults({
             <SearchResultItem
               key={result.id}
               result={result}
-              currentId={list.current}
+              currentId={current}
               onOpen={open}
               t={t}
             />
@@ -1144,6 +1151,7 @@ function SearchResults({
  */
 export function WorkspaceBrowser({
   wide,
+  usePanelInfo,
   expandSidebar,
   useSessions,
   useSessionPendingInteraction,
@@ -1663,6 +1671,7 @@ export function WorkspaceBrowser({
             <SearchResults
               useSessions={useSessions}
               useSessionPendingInteraction={useSessionPendingInteraction}
+              usePanelInfo={usePanelInfo}
               open={openSearchResult}
               workspaces={workspaces}
               archivedSessionIds={archivedSessionIds}
@@ -1676,6 +1685,7 @@ export function WorkspaceBrowser({
             ? (
               <FlatList
                 useSessions={useSessions} useSessionPendingInteraction={useSessionPendingInteraction}
+                usePanelInfo={usePanelInfo}
                 open={open} forkSession={forkSession}
                 onSessionRename={onSessionRename} onSessionArchive={onSessionArchive}
                 archivedSessionIds={archivedSessionIds}
@@ -1696,6 +1706,7 @@ export function WorkspaceBrowser({
               <SessionTree
                 useSessions={useSessions}
                 useSessionPendingInteraction={useSessionPendingInteraction}
+                usePanelInfo={usePanelInfo}
                 onSessionRename={onSessionRename}
                 onSessionArchive={onSessionArchive}
                 forkSession={forkSession}
