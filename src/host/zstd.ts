@@ -11,7 +11,132 @@
 import { closeSync, openSync, readFileSync, readSync } from 'node:fs'
 import { readFile } from 'node:fs/promises'
 import { constants, zstdDecompressSync } from 'node:zlib'
-import { decodeStorageRecord } from '@deepseek-ai/dsh-session'
+
+function isRecord(value: unknown): value is Record<string, any> {
+  return typeof value === 'object' && value !== null
+}
+
+function hasExactKeys(value: Record<string, any>, keys: string[]): boolean {
+  return Object.keys(value).length === keys.length && keys.every((k) => Object.hasOwn(value, k))
+}
+
+function validateRunData(tag: string, data: Record<string, any>, payloadKey: 'args' | 'texts'): string[] {
+  if (typeof data.turn !== 'number' || typeof data.step !== 'number' || typeof data.index !== 'number') {
+    throw new Error(`malformed ${tag} storage row: turn/step/index must be numbers`)
+  }
+  const payload = data[payloadKey]
+  if (!Array.isArray(payload) || payload.length === 0 || payload.some((entry) => typeof entry !== 'string')) {
+    throw new Error(`malformed ${tag} storage row: ${payloadKey} must be a non-empty string array`)
+  }
+  const dt = data.dt
+  if (!Array.isArray(dt) || dt.some((gap) => !Number.isSafeInteger(gap))) {
+    throw new Error(`malformed ${tag} storage row: dt must be an array of safe integers`)
+  }
+  if (dt.length !== payload.length - 1) {
+    throw new Error(`malformed ${tag} storage row: dt length ${dt.length} does not match ${payload.length} members`)
+  }
+  return payload
+}
+
+function validateRow(value: Record<string, any>, tag: string): Record<string, any> {
+  if (!hasExactKeys(value, ['type', 'seq0', 'time0', 'data'])) {
+    throw new Error(`malformed ${tag} storage row: envelope must be exactly {type, seq0, time0, data}`)
+  }
+  if (!Number.isSafeInteger(value.seq0) || value.seq0 < 0 || Object.is(value.seq0, -0)) {
+    throw new Error(`malformed ${tag} storage row: seq0 must be a non-negative safe integer`)
+  }
+  if (!Number.isSafeInteger(value.time0)) {
+    throw new Error(`malformed ${tag} storage row: time0 must be a safe integer`)
+  }
+  const data = value.data
+  if (!isRecord(data)) {
+    throw new Error(`malformed ${tag} storage row: data must be an object`)
+  }
+  let payload: string[]
+  if (tag === 'tool-call-chunks') {
+    const withName = hasExactKeys(data, ['turn', 'step', 'index', 'id', 'name', 'dt', 'args'])
+    if (!withName && !hasExactKeys(data, ['turn', 'step', 'index', 'id', 'dt', 'args'])) {
+      throw new Error(`malformed ${tag} storage row: data must be exactly {turn, step, index, id, name?, dt, args}`)
+    }
+    if (typeof data.id !== 'string' || (withName && typeof data.name !== 'string')) {
+      throw new Error(`malformed ${tag} storage row: id (and name when present) must be strings`)
+    }
+    payload = validateRunData(tag, data, 'args')
+  } else {
+    if (!hasExactKeys(data, ['turn', 'step', 'index', 'dt', 'texts'])) {
+      throw new Error(`malformed ${tag} storage row: data must be exactly {turn, step, index, dt, texts}`)
+    }
+    payload = validateRunData(tag, data, 'texts')
+  }
+  if (payload.length - 1 > Number.MAX_SAFE_INTEGER - value.seq0) {
+    throw new Error(`malformed ${tag} storage row: member seqs must stay safe integers`)
+  }
+  let time = value.time0
+  for (const gap of data.dt) {
+    time += gap
+    if (!Number.isSafeInteger(time)) {
+      throw new Error(`malformed ${tag} storage row: member times must stay safe integers`)
+    }
+  }
+  return value
+}
+
+function expandRow(row: Record<string, any>): any[] {
+  const members: string[] = row.type === 'tool-call-chunks' ? row.data.args : row.data.texts
+  const events: any[] = []
+  let time = row.time0
+  for (let k = 0; k < members.length; k++) {
+    if (k > 0) time += row.data.dt[k - 1]
+    let chunk: any
+    switch (row.type) {
+      case 'text-chunks':
+        chunk = {
+          type: 'text-delta',
+          index: row.data.index,
+          text: members[k],
+        }
+        break
+      case 'reasoning-chunks':
+        chunk = {
+          type: 'reasoning-delta',
+          index: row.data.index,
+          text: members[k],
+        }
+        break
+      case 'tool-call-chunks':
+        chunk = {
+          type: 'tool-call-delta',
+          index: row.data.index,
+          id: row.data.id,
+          ...(Object.hasOwn(row.data, 'name') ? { name: row.data.name } : {}),
+          argumentsDelta: members[k],
+        }
+        break
+      default:
+        throw new Error(`chunk-rows received unsupported row ${String(row)}`)
+    }
+    events.push({
+      type: 'assistant/chunk',
+      seq: row.seq0 + k,
+      time,
+      data: {
+        turn: row.data.turn,
+        step: row.data.step,
+        chunk,
+      },
+    })
+  }
+  return events
+}
+
+export function decodeStorageRecord(value: unknown): any[] {
+  if (!isRecord(value)) return [value]
+  const tag = value.type
+  if (tag !== 'text-chunks' && tag !== 'reasoning-chunks' && tag !== 'tool-call-chunks') {
+    return [value]
+  }
+  return expandRow(validateRow(value, tag))
+}
 
 const ZSTD_MAGIC = 0xfd2fb528 // little-endian bytes: 28 b5 2f fd
 

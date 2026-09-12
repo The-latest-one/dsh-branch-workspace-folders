@@ -102,10 +102,39 @@ else
   echo "[install-dsh] pnpm install succeeded; keeping node_modules managed by pnpm."
 fi
 
-echo "[install-dsh] Restarting DSH web..."
-# Match both `node /usr/local/bin/dsh web` and `dsh web` processes.
-pkill -f "dsh web" 2>/dev/null || true
-sleep 1
-cd "$DSH_START_DIR"
-nohup dsh web >/tmp/dsh-web.log 2>&1 &
-echo "[install-dsh] DSH web restarted with pid $!"
+echo "[install-dsh] Updating profile configuration..."
+node -e '
+const fs = require("node:fs");
+const path = require("node:path");
+const profile = process.argv[1];
+const pkgName = process.argv[2];
+const profilePkgPath = path.join(profile, "package.json");
+if (fs.existsSync(profilePkgPath)) {
+  const pkg = JSON.parse(fs.readFileSync(profilePkgPath, "utf8"));
+  pkg.dependencies = pkg.dependencies || {};
+  pkg.dsh = pkg.dsh || {};
+  pkg.dsh.profile = pkg.dsh.profile || {};
+  pkg.dsh.profile.bundles = pkg.dsh.profile.bundles || [];
+  let changed = false;
+  if (!pkg.dsh.profile.bundles.includes(pkgName)) {
+    pkg.dsh.profile.bundles.push(pkgName);
+    changed = true;
+  }
+  if (changed) {
+    fs.writeFileSync(profilePkgPath, JSON.stringify(pkg, null, 2) + "\n", "utf8");
+    console.log("[install-dsh] Added " + pkgName + " to profile bundles.");
+  }
+}
+' "$PROFILE" "$PKG_NAME"
+
+if [ "${DSH_HOT_RELOAD:-0}" = "1" ] || [ "${NO_RESTART:-0}" = "1" ]; then
+  echo "[install-dsh] Skipped DSH web process restart (hot-reload / NO_RESTART requested)."
+else
+  echo "[install-dsh] Restarting DSH web (set NO_RESTART=1 to avoid restart)..."
+  # Match both `node /usr/local/bin/dsh web` and `dsh web` processes.
+  pkill -f "dsh web" 2>/dev/null || true
+  sleep 1
+  cd "$DSH_START_DIR"
+  nohup dsh web >/tmp/dsh-web.log 2>&1 &
+  echo "[install-dsh] DSH web restarted with pid $!"
+fi
