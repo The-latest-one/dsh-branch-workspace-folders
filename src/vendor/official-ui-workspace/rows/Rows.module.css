@@ -5,6 +5,7 @@
   gap: 6px;
   border-radius: 8px;
   padding: 0 8px;
+  padding-inline-start: calc(8px + var(--dsh-workspace-indent, 0px) + var(--dsh-branch-indent, 0px));
   cursor: pointer;
   user-select: none;
   color: var(--dsw-alias-label-primary);
@@ -12,11 +13,11 @@
 
 .projectRow:hover,
 .sessionRow:hover {
-  background: var(--dsw-alias-interactive-bg-hover);
+  background-color: var(--dsw-alias-interactive-bg-hover);
 }
 
 .sessionRow.selected {
-  background: var(--dsw-alias-interactive-bg-hover);
+  background-color: var(--dsw-alias-interactive-bg-hover);
 }
 
 .searchResultRow {
@@ -41,6 +42,10 @@
 
 .searchResultRow.selected {
   background: var(--dsw-alias-interactive-bg-hover);
+}
+
+.searchResultRow.archived {
+  opacity: 0.48;
 }
 
 .searchResultHeading {
@@ -240,8 +245,13 @@
 .projectRow:hover .rowActions,
 .sessionRow:hover .rowActions,
 .projectRow.menuOpen .rowActions,
-.sessionRow.menuOpen .rowActions {
+.sessionRow.menuOpen .rowActions,
+.searchResultRow:hover .rowActions {
   display: inline-flex;
+}
+
+.searchResultHeading .rowActions {
+  margin-left: auto;
 }
 
 .sessionRow:hover .time,
@@ -253,7 +263,7 @@
    hover fill while its dropdown is up). */
 .projectRow.menuOpen,
 .sessionRow.menuOpen {
-  background: var(--dsw-alias-interactive-bg-hover);
+  background-color: var(--dsw-alias-interactive-bg-hover);
 }
 
 /* Session drag insert marker: a leading chevron and 2px rule between rows,
@@ -367,23 +377,33 @@
   }
 }
 
-/* Branch tree row emphasis: fork roots stay prominent, descendants step
-   down to the secondary label. */
-.branchRoot {
-  font-weight: 600;
-}
-
+/* Branch tree row styling */
+.branchParent .title,
 .branchRoot .title {
-  font-weight: 600;
+  font-weight: 500;
 }
 
-.branchChild {
-  font-weight: 400;
-}
-
-.branchChild .title {
-  font-weight: 400;
+.branchChild:not(.branchParent) .title {
   color: var(--dsw-alias-label-secondary);
+}
+
+.branchChild:hover .title,
+.branchChild.selected .title {
+  color: var(--dsw-alias-label-primary);
+}
+
+/* Multi-level vertical tree guide rails for depth >= 2 */
+.deepBranch {
+  background-image: repeating-linear-gradient(
+    to right,
+    transparent 0px,
+    transparent 15px,
+    var(--dsw-alias-border-l4) 15px,
+    var(--dsw-alias-border-l4) 16px
+  );
+  background-position-x: calc(8px + var(--dsh-workspace-indent, 0px) + 4px);
+  background-size: calc((var(--dsh-branch-depth, 1) - 1) * 16px) 100%;
+  background-repeat: no-repeat;
 }
 
 /* Dimmed rows (search refinement context). */
@@ -393,8 +413,83 @@
 
 /* Fork badge: tabular numerals so the descendant count does not jitter. */
 .branchBadge {
-  min-width: 24px !important;
-  min-height: 22px !important;
-  padding: 0 6px !important;
+  min-width: 20px;
+  min-height: 18px;
+  padding: 0 4px;
   font-variant-numeric: tabular-nums;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  flex: none;
+  font-size: 11px;
+  line-height: 16px;
+  color: var(--dsw-alias-label-tertiary);
+  cursor: default;
+  transition: opacity 120ms ease;
 }
+
+.sessionRow.archived {
+  opacity: 0.48;
+}
+
+/* Ensure branch child titles under 48% opacity remain WCAG compliant by keeping primary color */
+.sessionRow.archived.branchChild .title {
+  color: var(--dsw-alias-label-primary);
+}
+
+.pinnedIndicator {
+  display: inline-flex;
+  flex: none;
+  width: 16px;
+  height: 20px;
+  align-items: center;
+  justify-content: center;
+  margin-right: 4px;
+  color: var(--dsw-alias-label-tertiary);
+}
+
+/* Branch toggle button inside leading slot */
+.branchToggleSlot,
+.branchGuideSlot {
+  width: 18px;
+  height: 20px;
+  flex: none;
+  box-sizing: border-box;
+}
+
+.branchGuideSlot {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--dsw-alias-label-tertiary);
+  opacity: 0.75;
+  user-select: none;
+  pointer-events: none;
+}
+
+.sessionRow:hover .branchGuideSlot,
+.sessionRow.selected .branchGuideSlot {
+  color: var(--dsw-alias-label-secondary);
+  opacity: 1;
+}
+
+.branchToggleSlot {
+  padding: 0;
+  border: none;
+  background: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--dsw-alias-label-tertiary);
+  cursor: pointer;
+  border-radius: 4px;
+  position: relative;
+  z-index: 2;
+}
+
+.branchToggleSlot:hover {
+  color: var(--dsw-alias-label-primary);
+}
+
+

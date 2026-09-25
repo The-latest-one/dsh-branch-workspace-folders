@@ -12,5 +12,7 @@ export {
   buildSiblingsMap,
   collectBranchIds,
   countSessionDescendantsFromList,
+  sortTreeByUpdatedAt,
+  type TimeSortMode,
   type BranchNode,
 } from '../vendor/official-ui-workspace/branch.ts'

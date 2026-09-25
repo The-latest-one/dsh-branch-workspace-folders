@@ -40,12 +40,58 @@ interface AppContext {
   get?: (name: string) => any
 }
 
-function isLoopback(remote: string): boolean {
+export function isLoopback(remote: string): boolean {
   if (!remote) return false
   if (remote === '::1' || remote.startsWith('::1%')) return true
   let r = remote
   if (r.startsWith('::ffff:')) r = r.slice(7)
   return r.startsWith('127.')
+}
+
+export function isLoopbackHost(host: string): boolean {
+  if (!host) return false
+  try {
+    const parsed = new URL(`http://${host}`)
+    const hostname = parsed.hostname
+    if (hostname === 'localhost' || hostname === '[::1]' || hostname === '::1') return true
+    const parts = hostname.split('.')
+    return (
+      parts.length === 4 &&
+      parts[0] === '127' &&
+      parts.every((part) => /^\d{1,3}$/.test(part) && Number(part) <= 255)
+    )
+  } catch {
+    return false
+  }
+}
+
+export function isTrustedBrowserRequest(req: any): boolean {
+  const getHeader = (name: string): string | undefined => {
+    const raw = req.headers?.[name]
+    return Array.isArray(raw) ? raw[0] : raw
+  }
+  const hostHeader = getHeader('host')
+  // Defend against DNS rebinding: Host header must target loopback authority
+  if (!hostHeader || !isLoopbackHost(hostHeader)) return false
+
+  // Defend against cross-site browser requests (CSRF defense)
+  if (getHeader('sec-fetch-site') === 'cross-site') return false
+
+  const origin = getHeader('origin')
+  if (!origin) return true // Non-browser requests or same-origin requests without Origin header
+
+  try {
+    const originUrl = new URL(origin)
+    return originUrl.host.toLowerCase() === hostHeader.toLowerCase()
+  } catch {
+    return false
+  }
+}
+
+export function isValidSessionId(id: unknown): id is string {
+  if (typeof id !== 'string' || id.length === 0 || id.length > 128) return false
+  // Forbid directory separators and parent directory traversal
+  return /^[a-zA-Z0-9_-]+$/.test(id)
 }
 
 function expandHome(p: string): string {
@@ -310,7 +356,12 @@ function discoverSessions(root: string): SessionLocation[] {
   return discoverSessionsFromFiles(listSessionFiles(root))
 }
 
-function discoverSessionsCached(root: string): SessionLocation[] {
+interface DiscoveredSessionLocations {
+  locations: SessionLocation[]
+  signature: string
+}
+
+function discoverSessionsCached(root: string): DiscoveredSessionLocations {
   let mtimeMs = 0
   try {
     mtimeMs = statSync(root).mtimeMs
@@ -327,11 +378,11 @@ function discoverSessionsCached(root: string): SessionLocation[] {
     sessionsCache.signature === signature &&
     now - sessionsCache.at < SESSIONS_CACHE_TTL_MS
   ) {
-    return sessionsCache.locations
+    return { locations: sessionsCache.locations, signature }
   }
   const locations = discoverSessionsFromFiles(files)
   sessionsCache = { root, at: now, mtimeMs, signature, locations }
-  return locations
+  return { locations, signature }
 }
 
 async function parseSessionAt(
@@ -355,13 +406,13 @@ async function discoverSessionLocations(
   ctx: AppContext,
   root: string,
   persistence: DshPersistence | undefined,
-): Promise<SessionLocation[]> {
+): Promise<DiscoveredSessionLocations> {
   if (persistence && typeof persistence.list === 'function') {
     const now = Date.now()
     const sigFiles = listSessionFiles(root)
     const sig = sessionFilesSignature(sigFiles)
     if (persistenceCache && persistenceCache.root === root && persistenceCache.signature === sig && now - persistenceCache.at < SESSIONS_CACHE_TTL_MS) {
-      return persistenceCache.locations
+      return { locations: persistenceCache.locations, signature: sig }
     }
     try {
       const headers = await persistence.list()
@@ -380,7 +431,7 @@ async function discoverSessionLocations(
         }
         if (locations.length > 0) {
           persistenceCache = { at: now, root, signature: sig, locations }
-          return locations
+          return { locations, signature: sig }
         }
       }
     } catch (error) {
@@ -557,19 +608,64 @@ async function listArchivedSessions(
   const archivedKey = `${archivedIds.length}:${archivedIds.join(',')}`
   const now = Date.now()
   const root = homeSessionsRoot(wctx)
-  const locations = await discoverSessionLocations(wctx, root, getPersistence())
-  const fileSig = sessionFilesSignature(locations.map(l => ({ sessionId: l.sessionId, workspace: l.workspace, file: l.file })) as any)
+  const { locations, signature: fileSig } = await discoverSessionLocations(wctx, root, getPersistence())
   const compositeKey = `${archivedKey}|sig:${fileSig}`
   if (archivesCache && archivesCache.archivedKey === compositeKey && now - archivesCache.at < ARCHIVES_CACHE_TTL_MS) {
     return archivesCache.sessions
   }
   const byLocation = new Map(locations.map((location) => [location.sessionId, location]))
-  const lineage = lineageFromLocations(locations)
   const liveService = ctx.get?.('sessions')
   const meta = getArchivedMetaCache(root)
   let metaChanged = false
-  const result: ArchivedSessionDTO[] = []
 
+  // Collect entries needing cold log decompression with bounded concurrency
+  const toParse: Array<{ id: string; location: SessionLocation; mtimeMs?: number }> = []
+  for (const id of archivedIds) {
+    const loc = byLocation.get(id)
+    if (!loc) continue
+    const mtimeMs = safeMtimeMs(loc.file)
+    const cached = meta.byId[id]
+    if (!cached || cached.mtimeMs !== mtimeMs) {
+      toParse.push({ id, location: loc, mtimeMs })
+    }
+  }
+
+  const CONCURRENCY = 4
+  for (let i = 0; i < toParse.length; i += CONCURRENCY) {
+    const batch = toParse.slice(i, i + CONCURRENCY)
+    await Promise.all(
+      batch.map(async ({ id, location, mtimeMs }) => {
+        try {
+          const s = await parseSessionAt(location, getPersistence(), ctx.logger)
+          meta.byId[id] = {
+            sessionId: id,
+            parentId: s.parentId ?? headerParentId(location.header),
+            cwd: s.cwd,
+            title: s.title || id,
+            updatedAt: s.lastActiveAt,
+            running: s.running,
+            blank: s.blank,
+            mtimeMs,
+          }
+          metaChanged = true
+        } catch (error) {
+          ctx.logger?.warn?.('[branch-workspace] skip unreadable archived session:', id, String(error))
+          const cached = meta.byId[id]
+          meta.byId[id] = cached ?? {
+            sessionId: id,
+            parentId: headerParentId(location.header),
+            cwd: location.header?.cwd,
+            title: id,
+            updatedAt: location.header?.createdAt,
+            mtimeMs,
+          }
+          metaChanged = true
+        }
+      }),
+    )
+  }
+
+  const result: ArchivedSessionDTO[] = []
   for (const id of archivedIds) {
     const location = byLocation.get(id)
     const cached = meta.byId[id]
@@ -594,35 +690,12 @@ async function listArchivedSessions(
       continue
     }
 
-    const mtimeMs = safeMtimeMs(location.file)
-    let entry = cached
-    if (!entry || entry.mtimeMs !== mtimeMs) {
-      try {
-        const s = await parseSessionAt(location, getPersistence(), ctx.logger)
-        entry = {
-          sessionId: id,
-          parentId: s.parentId ?? headerParentId(location.header),
-          cwd: s.cwd,
-          title: s.title || id,
-          updatedAt: s.lastActiveAt,
-          running: s.running,
-          blank: s.blank,
-          mtimeMs,
-        }
-        meta.byId[id] = entry
-        metaChanged = true
-      } catch (error) {
-        ctx.logger?.warn?.('[branch-workspace] skip unreadable archived session:', id, String(error))
-        entry = cached ?? {
-          sessionId: id,
-          parentId: headerParentId(location.header),
-          cwd: location.header?.cwd,
-          title: id,
-          updatedAt: location.header?.createdAt,
-          mtimeMs,
-        }
-        meta.byId[id] = entry
-      }
+    const entry = cached ?? {
+      sessionId: id,
+      parentId: headerParentId(location.header),
+      cwd: location.header?.cwd,
+      title: id,
+      updatedAt: location.header?.createdAt,
     }
 
     result.push({
@@ -659,7 +732,7 @@ async function purgeSessions(
   try {
   const registry = getWorkspaceRegistry(ctx, wctx)
   if (!registry) throw new Error('workspace registry unavailable')
-  const ids = Array.from(new Set(sessionIds.filter((id) => typeof id === 'string' && id.length > 0)))
+  const ids = Array.from(new Set(sessionIds.filter((id) => isValidSessionId(id))))
   if (ids.length === 0) return { purged: 0 }
   if (ids.length > 32) throw new Error('单次最多处理 32 个会话')
   const archivedIds = Array.isArray(registry.archivedSessionIds) ? registry.archivedSessionIds : []
@@ -667,7 +740,7 @@ async function purgeSessions(
     if (!archivedIds.includes(sessionId)) throw new Error('只能永久删除已归档的根会话')
   }
   const root = homeSessionsRoot(wctx)
-  const locations = await discoverSessionLocations(wctx, root, getPersistence())
+  const { locations } = await discoverSessionLocations(wctx, root, getPersistence())
   // Purge only needs the durable fork graph from SessionHeader, not full logs.
   // This removes the previous all-session decompress/parse bottleneck.
   // Include archived ids that are already missing from disk but whose parent
@@ -722,7 +795,9 @@ async function purgeSessions(
   const moved: { dir: string; trashDir: string }[] = []
 
   const rollbackMoves = async () => {
-    for (const m of [...moved].reverse()) {
+    const toRollback = [...moved].reverse()
+    moved.length = 0
+    for (const m of toRollback) {
       try {
         await rename(m.trashDir, m.dir)
       } catch (e: any) {
@@ -768,13 +843,18 @@ async function purgeSessions(
   }
 
   try {
-    const writeArchived = async (ids: string[]) => {
+    const writeArchived = async (ids: string[], pinnedIds: string[]) => {
       const persist = async (state: any) => {
         if (!state) throw new Error('workspace registry state unavailable')
+        const nextState = {
+          ...state,
+          archivedSessionIds: ids,
+          pinnedSessionIds: pinnedIds,
+        }
         if (registry?.setState) {
-          await registry.setState({ ...state, archivedSessionIds: ids })
+          await registry.setState(nextState)
         } else if (registry?.global?.set) {
-          await registry.global.set({ ...state, archivedSessionIds: ids })
+          await registry.global.set(nextState)
         } else {
           throw new Error('workspace registry cannot persist archived state')
         }
@@ -793,8 +873,10 @@ async function purgeSessions(
 
     const currentState = registry?.requireState?.() ?? registry?.global?.get?.()
     const originalArchivedIds = Array.isArray(currentState?.archivedSessionIds) ? currentState.archivedSessionIds : []
+    const originalPinnedIds = Array.isArray(currentState?.pinnedSessionIds) ? currentState.pinnedSessionIds : []
     const nextArchivedIds = originalArchivedIds.filter((id: string) => !family.has(id))
-    await writeArchived(nextArchivedIds)
+    const nextPinnedIds = originalPinnedIds.filter((id: string) => !family.has(id))
+    await writeArchived(nextArchivedIds, nextPinnedIds)
 
     const workspaces = registry?.list?.() ?? []
     const detached: { ws: any; id: string }[] = []
@@ -816,7 +898,7 @@ async function purgeSessions(
       // Best-effort rollback: restore archived ids, move directories back, then
       // re-attach already-detached sessions (attach needs the original dirs).
       try {
-        await writeArchived(originalArchivedIds)
+        await writeArchived(originalArchivedIds, originalPinnedIds)
       } catch {
         // ignore secondary rollback failure
       }
@@ -928,7 +1010,7 @@ async function restoreBranch(
   // Build family from full header graph (including non-archived intermediates) so a leaf whose middle ancestor
   // is not archived can still be reached; then filter to archived-only ids.
   const root = homeSessionsRoot(wctx)
-  const locations = await discoverSessionLocations(wctx, root, getPersistence())
+  const { locations } = await discoverSessionLocations(wctx, root, getPersistence())
   const archivedMeta = getArchivedMetaCache(root)
   const lineageItems: Array<{ sessionId: string; parentId?: string }> = lineageFromLocations(locations)
   const lineageById = new Map(lineageItems.map((item) => [item.sessionId, item]))
@@ -989,6 +1071,11 @@ export function apply(ctx: AppContext): (() => void) | void {
           return
         }
 
+        if (!isTrustedBrowserRequest(req)) {
+          sendJson(res, 403, { ok: false, error: '拒绝跨站请求 (Cross-site request refused)' })
+          return
+        }
+
         try {
           if (req.method === 'GET' && pathname === `${API_PREFIX}/health`) {
             sendJson(res, 200, { ok: true })
@@ -1005,7 +1092,7 @@ export function apply(ctx: AppContext): (() => void) | void {
             let sessionId = ''
             try {
               const body = JSON.parse(await readBody(req) || '{}')
-              sessionId = typeof body.sessionId === 'string' ? body.sessionId : ''
+              sessionId = typeof body.sessionId === 'string' ? body.sessionId.trim() : ''
             } catch (e: any) {
               if (e?.code === 'PAYLOAD_TOO_LARGE') {
                 sendJson(res, 413, { ok: false, error: 'request body too large' })
@@ -1015,8 +1102,8 @@ export function apply(ctx: AppContext): (() => void) | void {
               sendJson(res, 400, { ok: false, error: 'invalid JSON body' })
               return
             }
-            if (!sessionId) {
-              sendJson(res, 400, { ok: false, error: 'sessionId required' })
+            if (!isValidSessionId(sessionId)) {
+              sendJson(res, 400, { ok: false, error: 'sessionId 格式无效或为空' })
               return
             }
             const data = await purgeSessions(ctx, wctx, [sessionId], getPersistence)
@@ -1032,8 +1119,8 @@ export function apply(ctx: AppContext): (() => void) | void {
                 sendJson(res, 400, { ok: false, error: 'sessionIds must be string[]' })
                 return
               }
-              if (body.sessionIds.some((id: unknown) => typeof id !== 'string' || (id as string).length === 0)) {
-                sendJson(res, 400, { ok: false, error: 'sessionIds must be non-empty strings' })
+              if (body.sessionIds.some((id: unknown) => !isValidSessionId(id))) {
+                sendJson(res, 400, { ok: false, error: 'sessionIds 包含无效的会话 ID' })
                 return
               }
               sessionIds = body.sessionIds as string[]
@@ -1059,7 +1146,7 @@ export function apply(ctx: AppContext): (() => void) | void {
             let sessionId = ''
             try {
               const body = JSON.parse(await readBody(req) || '{}')
-              sessionId = typeof body.sessionId === 'string' ? body.sessionId : ''
+              sessionId = typeof body.sessionId === 'string' ? body.sessionId.trim() : ''
             } catch (e: any) {
               if (e?.code === 'PAYLOAD_TOO_LARGE') {
                 sendJson(res, 413, { ok: false, error: 'request body too large' })
@@ -1069,8 +1156,8 @@ export function apply(ctx: AppContext): (() => void) | void {
               sendJson(res, 400, { ok: false, error: 'invalid JSON body' })
               return
             }
-            if (!sessionId) {
-              sendJson(res, 400, { ok: false, error: 'sessionId required' })
+            if (!isValidSessionId(sessionId)) {
+              sendJson(res, 400, { ok: false, error: 'sessionId 格式无效或为空' })
               return
             }
             await restoreSessions(ctx, wctx, [sessionId])
@@ -1086,8 +1173,8 @@ export function apply(ctx: AppContext): (() => void) | void {
                 sendJson(res, 400, { ok: false, error: 'sessionIds must be string[]' })
                 return
               }
-              if (body.sessionIds.some((id: unknown) => typeof id !== 'string' || (id as string).length === 0)) {
-                sendJson(res, 400, { ok: false, error: 'sessionIds must be non-empty strings' })
+              if (body.sessionIds.some((id: unknown) => !isValidSessionId(id))) {
+                sendJson(res, 400, { ok: false, error: 'sessionIds 包含无效的会话 ID' })
                 return
               }
               sessionIds = body.sessionIds as string[]
@@ -1113,7 +1200,7 @@ export function apply(ctx: AppContext): (() => void) | void {
             let sessionId = ''
             try {
               const body = JSON.parse(await readBody(req) || '{}')
-              sessionId = typeof body.sessionId === 'string' ? body.sessionId : ''
+              sessionId = typeof body.sessionId === 'string' ? body.sessionId.trim() : ''
             } catch (e: any) {
               if (e?.code === 'PAYLOAD_TOO_LARGE') {
                 sendJson(res, 413, { ok: false, error: 'request body too large' })
@@ -1123,8 +1210,8 @@ export function apply(ctx: AppContext): (() => void) | void {
               sendJson(res, 400, { ok: false, error: 'invalid JSON body' })
               return
             }
-            if (!sessionId) {
-              sendJson(res, 400, { ok: false, error: 'sessionId required' })
+            if (!isValidSessionId(sessionId)) {
+              sendJson(res, 400, { ok: false, error: 'sessionId 格式无效或为空' })
               return
             }
             const data = await restoreBranch(ctx, wctx, sessionId, getPersistence)

@@ -1,69 +1,85 @@
 # dsh-branch-workspace-folders
 
-DSH Web 左侧工作区/会话栏插件：在官方 `@deepseek-ai/dsh-client-ui-workspace` WorkspaceBrowser 的基础上，根据 `parentId` / 根会话关系，把同一棵分叉树的所有会话折叠到对应根会话下，形成树形“分支文件夹”。
+[![Version](https://img.shields.io/badge/version-v0.1.15-blue.svg)](package.json)
+[![DSH Compatibility](https://img.shields.io/badge/DSH-v0.1.7--rc.1-success.svg)](package.json)
+[![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
+[![Tests](https://img.shields.io/badge/tests-33%2F33%20passing-brightgreen.svg)](tests/)
 
-## 特性
+> DeepSeek Harness (DSH) 官方生态全功能增强插件：基于官方原生 UI/UX 契约，深度重构侧边栏工作区与会话树，提供**无限深度非递归防爆栈会话树**、**原生 L 型树导轨与字阶分层**、**折叠场景状态通道冒泡**以及**会话级联物理永久删除（Purge）事务**。
 
-- 复用官方 WorkspaceBrowser 渲染与 CSS，保持原生 DSH Web 观感。
-- 深度适配 DeepSeek Harness `v0.1.5-rc.2` 及以上版本：
-  - 完美支持 V3 格式持久化文件（`session.v3.jsonl.zstd`）并向下兼容 V2/V0 旧版；
-  - 对齐 `usePanelInfo` 运行时契约，全局面板（设置、文件等）激活时自动抑制会话高亮；
-  - 遵循超级模组标准生产线（`scripts/build.sh`、`build:client`），支持运行时热注入与热重载。
-- 按 `parentId` 将 forked sessions 折叠到根会话下：
-  - 根会话显示分支数 badge；
-  - 支持单分支折叠/展开；
-  - 当前会话所在根/分支链自动展开。
-- 保留官方能力：
-  - groupBy：`workspace` / `flat`；
-  - orderBy：`manual` / `updated`，并扩展 `default` / `title` / `running`；
-  - 拖拽排序、新建 workspace/session、重命名/删除/fork/archive；
-  - 搜索 + snippet、HoverCard、时间/状态、ARIA tree、Rail 模式。
-- 额外提供：
-  - 全局展开/折叠所有工作区；
-  - Refresh 按钮（刷新 sessions）；
-  - 溢出折叠（默认 5 条后显示 “Show more sessions”）。
-  - 设置页「已归档会话」：在 DSH Settings 中列出已归档会话树，支持恢复（unarchive）和根分支永久删除（级联删除该根及其所有 fork 后代）。
-  - Host API：`GET /branch-workspace/api/archives`、`POST /branch-workspace/api/restore`、`POST /branch-workspace/api/purge`（永久删除使用 `.trash-sessions` 暂存 + registry 更新 + 成功后物理删除，失败自动回滚）。
+---
 
-## 安装到 DSH profile
+## 🌟 核心特性与解决的痛点
 
-推荐使用一键自动安装命令：
+### 1. 树状层级呈现与视觉重构 (Universal Fork Tree)
+- **多分组模式通用覆盖**：无论用户选择 `workspace`（工作区分组）、`workspace-tree`（物理目录树）还是 `flat`（全局平铺），所有分叉会话均基于 `parentId` 聚合归入对应的根会话之下。
+- **双轨缩进解耦系统**：独立分配 `--dsh-branch-indent: calc(depth * 16px)` 与 `--dsh-workspace-indent`，彻底解决在 `workspace-tree` 模式下目录缩进被子会话覆盖所导致的负缩进视觉错位。
+- **排版字阶分层 (Typography Hierarchy)**：
+  - **根会话 / 父会话**：启用 `font-weight: 500`（Medium）并保持最高对比度的文本主色，形成清晰的视觉锚点；
+  - **分支子会话**：字色降低至次级文本色（`var(--dsw-alias-label-secondary)`），悬停或激活时自适应提亮；
+  - **L 型物理拐角与网格导轨**：引入 DSH 原生 `IconTreeCornerRegular` 矢量导轨，对于 `depth >= 2` 的深层嵌套自动启用纯 CSS 背景多级辅助线（`.deepBranch`），0 额外 DOM 开销。
+
+### 2. 折叠状态通道冒泡 (Status Bubbling)
+- **运行盲区自愈**：当用户折叠带有正在执行任务的会话家族时，子孙节点的活跃状态自动向上冒泡代理至根会话。
+- **严密优先级仲裁 (Priority FSM)**：
+  1. `Warning`（最高优先级）：任何后代等待交互（`approval` 待审批、`plan-review` 计划待审、`question` 待回答）时，根节点显示琥珀色警告点，且行尾时间戳替换为具体阻塞动作；
+  2. `Ongoing`（次高优先级）：任何后代处于 `running === true` 或有子智能体运行时，根节点显示与全局同相旋转的原生 14px 加载菊花；
+  3. `Done`（静默提醒）：后代有新完成会话时冒泡绿色提示点；
+  4. `Idle`：全体空闲时保持无点清爽状态。
+- **本体优先原则**：根会话自身有活跃状态时，始终优先展示自身。
+
+### 3. 会话级联物理永久删除事务 (Physical Cascade Purge)
+- **核心价值补全**：官方原生仅支持软归档（Archive），磁盘历史 `.jsonl.zstd` 与 SQLite 索引永久留存。本项目提供真正的物理永久删除。
+- **`.trash-sessions` 事务隔离与逆序回滚**：
+  - 物理移动日志至隔离区 -> 原子更新 `workspace.json`（同步清理 `sessionOrder`、`archivedSessionIds` 与 `pinnedSessionIds`，杜绝悬空索引）-> 提交清空。
+  - 遇到异常自动执行逆序回滚，保障数据零丢失。
+- **设置页已归档治理面板**：在 `settings.section`（id: `branch-workspace-archives`）提供完整的已归档会话树与一键级联物理清理。
+
+### 4. 极致工程可靠性 (Engine Reliability)
+- **全量非递归显式栈算法**：`buildSessionTree`、`flattenSessionTree`、`findSessionAncestors`、`aggregateDescendantStatus`、`sortTreeByUpdatedAt` 全部采用堆内显式栈迭代，经受住 20,000 层极端深度与多重环形拓扑压力测试，杜绝 `RangeError: Maximum call stack size exceeded`。
+- **In-Place Shadowing 降级保护**：通过插槽就地代理官方 `sidebar.workspaces`，并内嵌 React `ErrorBoundary`。任何极端异常自动回退至原生组件，绝不白屏。
+- **流式 Zstd 日志容错解包**：纯手工帧切分算法（`scanZstdFramesWithTorn`），容忍系统崩溃带来的追加写尾部残帧（torn tail），完美支持 V3/V2/V0 格式。
+- **网络与安全隔离**：Host API 严格校验回环 IP 绑定（`isLoopback`）与浏览器 `Sec-Fetch` 跨站防御，杜绝外部网络与 CSRF 穿透。
+
+---
+
+## 🏗 系统架构设计
+
+详细的系统拓扑、算法复杂度、时序图与状态机设计请参阅：
+👉 [架构与核心机制技术白皮书 (docs/ARCHITECTURE.md)](docs/ARCHITECTURE.md)
+
+---
+
+## 📦 安装与集成
+
+### 方式一：一键自动安装到本地 DSH Profile（推荐）
 
 ```bash
 npm run install:dsh
 ```
 
-脚本会自动完成：
+脚本将自动执行：双端类型检查 -> 编译构建 -> npm 打包 -> 部署至 `${DSH_HOME:-$HOME/.dsh}/profiles/web` -> 自愈 node_modules junction 并重启 Web 服务。
 
-1. `npm run typecheck`
-2. `npm run build`
-3. `npm pack`
-4. 将 tarball 复制到 profile 的 `vendor/` 目录
-5. 在 `${DSH_HOME:-$HOME/.dsh}/profiles/web` 下执行 `pnpm install`
-6. 如果 pnpm 因 profile 内其他远程依赖（如 GitHub 依赖）无法联网而失败，会自动降级为“直接同步插件文件到已安装的 node_modules”，然后重启 `dsh web`
+### 方式二：超级模组运行时热注入（开发免重启）
 
-也可以手动指定仓库、profile 和启动目录：
+如果当前 DSH 环境装有 `dsh-super-injector`（开发基建）：
 
 ```bash
-bash scripts/install-readonly.sh \
-  /root/dsh/new/dsh-branch-workspace-folders \
-  /root/.dsh/profiles/web
+# 1. 运行时直接注入（不修改 patch、不重启）：
+dev_inject_plugin {"dir": "/path/to/dsh-branch-workspace-folders"}
+
+# 2. 修改代码后执行确定性热重载：
+dev_reload_package {"packageName": "dsh-branch-workspace-folders"}
 ```
 
-常用环境变量：
+### 方式三：手动配置
 
-- `DSH_HOME`：DSH 数据目录，默认 `$HOME/.dsh`
-- `DSH_PROFILE`：目标 profile 路径，默认 `${DSH_HOME}/profiles/web`
-- `DSH_START_DIR`：重启 `dsh web` 时的工作目录，默认 `$HOME`
-- `NPM_CACHE_DIR`：npm pack 使用的缓存目录，默认 `/tmp/dsh-npm-cache`
-- `PNPM_STORE_DIR` / `PNPM_CACHE_DIR`：可选，传给 pnpm 的 store/cache 目录
-
-如果手动安装，在 DSH profile 的 `package.json` 中增加依赖和 bundle：
+在 DSH profile 的 `package.json` 中配置：
 
 ```json
 {
   "dependencies": {
-    "dsh-branch-workspace-folders": "file:/path/to/dsh-branch-workspace-folders-0.1.0.tgz"
+    "dsh-branch-workspace-folders": "link:/path/to/dsh-branch-workspace-folders"
   },
   "dsh": {
     "profile": {
@@ -75,43 +91,46 @@ bash scripts/install-readonly.sh \
 }
 ```
 
-然后在 profile 目录执行：
+并在 profile 目录运行 `pnpm install` 后重启服务。
+
+---
+
+## 🛠 开发、构建与验证工作流
+
+本项目贯彻 **Grounded Verification Gate（证据硬约束与验收门禁）**，所有交付必须按以下顺序完成全链路实测验证：
 
 ```bash
-pnpm install --offline --no-frozen-lockfile
-```
-
-重启 DSH Web 后生效。
-
-## 开发与构建
-
-```bash
-# 类型检查
+# 1. 前后端双端严格类型检查
 npm run typecheck
 
-# 编译 Host 与打包 Client
+# 2. 编译 Host 声明文件 + tsdown 打包客户端 client.js + 自动内联 CSS
 npm run build
 
-# 执行单测
+# 3. 运行自动化测试套件（必须全部 33/33 PASS）
 npm test
 
-# 打包 tgz 产物
-npm run pack
-```
-
-### 超级模组热注入（开发免重启）
-
-如当前 DSH 环境装有 `dsh-super-injector`，可直接在对答中或命令行进行运行时热注入：
-
-```bash
-# 运行时直接挂载（免重启）
-dev_inject_plugin {"dir": "/path/to/dsh-branch-workspace-folders"}
-
-# 修改代码后热重载
+# 4. 如当前处于 DSH 运行时，触发插件热重载生效
 dev_reload_package {"packageName": "dsh-branch-workspace-folders"}
 ```
 
-## 注意
+---
 
-- 本插件独立于 `dsh-branch-graph-sidebar`，不修改该插件。
-- 只负责左侧工作区/会话栏，不影响会话正文/消息流。
+## 🛡 核心设计不变量与避坑守则
+
+为保证长期维护的稳定性，后续开发修改严禁违反以下规范：
+
+1. **`WorkspacePickFlow` 绝不能使用条件渲染**：
+   [`WorkspaceBrowser.tsx`](src/vendor/official-ui-workspace/rows/WorkspaceBrowser.tsx) 中的 `<WorkspacePickFlow>` 必须常驻 DOM 树，仅通过 `open={wsPickerOpen}` prop 控制。若使用 `{wsPickerOpen && <WorkspacePickFlow />}`, 组件内部快速分支调用 `onClose()` 会把外层设为 false，导致弹窗被整机卸载，表现为“点击添加工作区完全没反应”。
+2. **分支折叠状态双轨驱动**：
+   Store 初始状态可能为空对象 `{}`（在 JS 中 `{}` 为真值，会导致 `??` 空值合并短路）。折叠状态必须由 `dsh.branch.collapsed.v1` 本地持久化与 local state 进行主驱动并由 `useMemo` 合并。
+3. **保持行操作 Slot 化**：
+   严禁在 [`Rows.tsx`](src/vendor/official-ui-workspace/rows/Rows.tsx) 中硬编码菜单项。必须使用 `renderSlot('sidebar.workspaces.session.menu.item')`，否则会阻断官方 0.1.7-rc.1 的 Pin（会话置顶）及其他插件扩展动作。
+4. **子智能体（Subagent）隔离**：
+   构建树时必须过滤 `origin === 'subagent'` 的瞬态会话，防止海量子智能体会话污染侧边栏。
+
+---
+
+## 📄 开源许可证
+
+本项目基于 [MIT 许可证](LICENSE) 发布。
+如需商业支持或定制开发，欢迎提交 Issue 或 Pull Request。

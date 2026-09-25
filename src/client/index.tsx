@@ -156,25 +156,31 @@ export function apply(ctx: ClientContext): void {
         const base = originalInit()
         return {
           ...(base || {}),
+          archivedFilter: base?.archivedFilter ?? 'default',
           collapsedBranchesByAccount: (base && base.collapsedBranchesByAccount) || {},
         }
       } catch (error) {
         console.error('[dsh-branch-workspace-folders] workspace view init failed, using empty state', error)
-        return { groupBy: 'workspace', orderBy: 'updated', groupExpansion: {}, collapsedBranchesByAccount: {} } as any
+        return {
+          groupBy: 'workspace',
+          orderBy: 'updated',
+          groupExpansion: {},
+          sessionOrderByAccount: {},
+          archivedFilter: 'default',
+          collapsedBranchesByAccount: {},
+        } as any
       }
     }
     spec.init = patchedInit
     const originalPersist = spec.persist
-    // Keep the v0.1.14 persist key: existing users keep their view state
-    // (the official 0.1.2-rc.1 renamed it to v5, which would discard it).
-    spec.persist = 'dsh.workspace.view.v6'
+    spec.persist = originalPersist ?? 'dsh.workspace.view.v5'
 
     return () => {
       for (const { key, fn } of added) {
         if (actions[key] === fn) delete actions[key]
       }
       if (spec.init === patchedInit) spec.init = originalInit
-      if (spec.persist === 'dsh.workspace.view.v6') spec.persist = originalPersist
+      if (spec.persist === (originalPersist ?? 'dsh.workspace.view.v5')) spec.persist = originalPersist
     }
   }
 

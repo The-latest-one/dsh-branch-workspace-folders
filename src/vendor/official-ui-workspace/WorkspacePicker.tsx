@@ -11,12 +11,12 @@
 import type { ReactNode, RefObject } from 'react'
 import { useCallback, useEffect, useState } from 'react'
 import {
-  Button, IconFolderClose16, IconPlusOutline16, Menu, Modal, type MenuEntry,
+  Button, IconFolderCloseRegular, IconPlusOutlineRegular, Menu, Modal, type MenuEntry,
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import type {
   WorkspaceId, WorkspaceSnapshot, WorkspaceView,
 } from '@deepseek-ai/dsh-api-workspace-controller/client'
-import type { SnapshotSelectorHook } from '@deepseek-ai/dsh-client-ui-slots'
+import type { SnapshotSelectorHook } from '@deepseek-ai/dsh-client-store'
 import type { DirectoryFlowOwnerProps, WorkspacePickerProps } from './contract/slots.ts'
 import css from './WorkspacePicker.module.css'
 
@@ -89,7 +89,7 @@ export function WorkspacePickFlow({
   // entry simply is not there (the seam's documented no-flow default). The
   // framework-bound hook keeps occupancy live: flow plugins activate (and
   // HMR-reload) independently of this menu's renders.
-  const flowAvailable = useDirectoryFlow(occupied => occupied)
+  const flowAvailable = useDirectoryFlow((occupied: any) => !!occupied)
   // An occupant that unloads mid-interaction leaves nobody to cancel: an
   // open flow over an empty hole withdraws so the menu actions come back.
   // flowOpen is a dependency because the flow can also OPEN over an already
@@ -99,7 +99,7 @@ export function WorkspacePickFlow({
     if (flowOpen && !flowAvailable) setFlowOpen(false)
   }, [flowOpen, flowAvailable])
   const addEntries: MenuEntry[] = flowAvailable
-    ? [{ id: ADD_WORKSPACE, label: t('menu.addWorkspace'), icon: <IconPlusOutline16 size={16} />, disabled: flowBusy }]
+    ? [{ id: ADD_WORKSPACE, label: t('menu.addWorkspace'), icon: <IconPlusOutlineRegular size={16} />, disabled: flowBusy }]
     : []
   // With workspaces listed, the add action pins below the scroll region
   // (divider + always visible); otherwise it IS the menu.
@@ -108,7 +108,7 @@ export function WorkspacePickFlow({
     ? workspaces.map(workspace => ({
       id: workspace.workspaceId,
       label: workspace.title,
-      icon: <IconFolderClose16 size={16} />,
+      icon: <IconFolderCloseRegular size={16} />,
       disabled: flowBusy,
     }))
     : addEntries
@@ -242,7 +242,7 @@ export function WorkspacePicker({
       useWorkspaces={useWorkspaces}
       createWorkspace={createWorkspace}
       useDirectoryFlow={useDirectoryFlow}
-      renderDirectoryFlow={owner => renderSlot('conversation.hero.workspace.directoryFlow', owner)}
+      renderDirectoryFlow={owner => renderSlot?.('conversation.hero.workspace.directoryFlow', owner)}
       selectedId={selectedId}
       onPick={onPick}
       onClose={onClose}

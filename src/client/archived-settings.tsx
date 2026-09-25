@@ -1,15 +1,18 @@
 import { useEffect, useMemo, useState } from 'react'
 import {
   Button,
-  IconArchiveOutline20,
-  IconBranchOutline16,
-  IconChevronDownOutline14,
-  IconChevronRightOutline14,
-  IconRefreshOutline16,
-  IconTrashOutline16,
+  Checkbox,
+  IconArchiveOutlineRegular,
+  IconBranchOutlineRegular,
+  IconChevronDownOutlineRegular,
+  IconChevronRightOutlineRegular,
+  IconRefreshOutlineRegular,
+  IconTrashOutlineRegular,
   Modal,
+  StateDot,
 } from '@deepseek-ai/dsh-client-ui-primitives'
-import { buildSessionTree, flattenSessionTree } from './vendor-runtime'
+import css from './ArchivedSettings.module.css'
+import { buildSessionTree, flattenSessionTree, sortTreeByUpdatedAt, type TimeSortMode } from './vendor-runtime'
 
 export interface ArchivedSessionDTO {
   sessionId: string
@@ -105,9 +108,7 @@ const en: Record<string, string> = {
 const dictionaries: Record<string, Record<string, string>> = { zh, en }
 
 const NS = 'branch-workspace-archives'
-const ARCHIVED_STYLE_ID = 'dsh-branch-workspace-folders-archives-css'
 const TIME_SORT_STORAGE_KEY = 'dsh.branch-workspace.archives.timeSort'
-let archivedStyleCount = 0
 
 function formatTime(value: number | undefined): string {
   if (value == null) return ''
@@ -115,8 +116,6 @@ function formatTime(value: number | undefined): string {
   const pad = (v: number) => String(v).padStart(2, '0')
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`
 }
-
-type TimeSortMode = 'none' | 'updatedAt-desc' | 'updatedAt-asc'
 
 function readStoredTimeSort(): TimeSortMode {
   try {
@@ -126,21 +125,6 @@ function readStoredTimeSort(): TimeSortMode {
   } catch {
     return 'none'
   }
-}
-
-function sortTreeByUpdatedAt(nodes: any[], mode: TimeSortMode): any[] {
-  if (mode === 'none') return nodes
-  const factor = mode === 'updatedAt-asc' ? 1 : -1
-  const sorted = [...nodes].sort((a: any, b: any) => {
-    const ta = typeof a?.updatedAt === 'number' ? a.updatedAt : Number.NEGATIVE_INFINITY
-    const tb = typeof b?.updatedAt === 'number' ? b.updatedAt : Number.NEGATIVE_INFINITY
-    if (ta !== tb) return (ta - tb) * factor
-    return a.id < b.id ? -1 : a.id > b.id ? 1 : 0
-  })
-  return sorted.map((node) => ({
-    ...node,
-    children: Array.isArray(node.children) && node.children.length > 0 ? sortTreeByUpdatedAt(node.children, mode) : node.children,
-  }))
 }
 
 function uiLabel(t: ((key: string, params?: any) => string) | undefined, zhKey: string, enKey: string): string {
@@ -207,44 +191,6 @@ export function ArchivedSettingsSection(props: any): any {
     load(ac.signal)
     return () => ac.abort()
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
-
-  useEffect(() => {
-    if (typeof document === 'undefined') return
-    archivedStyleCount += 1
-    if (archivedStyleCount === 1) {
-      const style = document.createElement('style')
-      style.id = ARCHIVED_STYLE_ID
-      style.textContent = `
-.bwf-archive-settings{display:flex;flex-direction:column;gap:12px;color:var(--dsw-alias-label-primary)}
-.bwf-archive-header{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
-.bwf-archive-header h2{margin:0;font-size:16px;line-height:24px;font-weight:600}
-.bwf-archive-empty{color:var(--dsw-alias-label-secondary);padding:12px 0}
-.bwf-archive-error{color:var(--dsw-alias-danger-fill);padding:8px 0}
-.bwf-archive-notice{color:var(--dsw-alias-label-secondary);padding:8px 0}
-.bwf-archive-list{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:2px}
-.bwf-archive-row{display:flex;align-items:center;gap:8px;min-height:32px;padding:4px 8px;border-radius:6px}
-.bwf-archive-row:hover{background:var(--dsw-alias-interactive-bg-hover)}
-.bwf-archive-title{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.bwf-archive-badge{display:inline-flex;align-items:center;gap:2px;color:var(--dsw-alias-label-tertiary);font-size:12px;white-space:nowrap}
-.bwf-archive-time{color:var(--dsw-alias-label-tertiary);font-size:12px;white-space:nowrap}
-.bwf-archive-actions{display:inline-flex;align-items:center;gap:4px;opacity:.85}
-.bwf-archive-toggle{display:inline-flex;align-items:center;justify-content:center;flex:none;width:20px;height:20px;padding:0;border:none;background:none;color:var(--dsw-alias-label-tertiary);cursor:pointer;border-radius:6px}
-.bwf-archive-toolbar{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
-.bwf-archive-select-all{display:inline-flex;align-items:center;gap:6px;color:var(--dsw-alias-label-secondary);font-size:13px;cursor:pointer}
-.bwf-archive-checkbox{flex:none;width:16px;height:16px;margin:0;accent-color:var(--dsw-alias-state-business-primary)}
-.bwf-archive-show-more{width:100%;margin-top:4px}
-.bwf-archive-running{color:var(--dsw-alias-success-fill)}
-`
-      document.head.appendChild(style)
-    }
-    return () => {
-      archivedStyleCount -= 1
-      if (archivedStyleCount === 0) {
-        const el = document.getElementById(ARCHIVED_STYLE_ID)
-        el?.remove()
-      }
-    }
   }, [])
 
   const treeNodes = useMemo(
@@ -414,20 +360,20 @@ export function ArchivedSettingsSection(props: any): any {
 
   if (loading && sessions.length === 0) {
     return (
-      <div className="bwf-archive-settings">
-        <div className="bwf-archive-header">
-          <IconArchiveOutline20 />
+      <div className={css.archiveSettings}>
+        <div className={css.header}>
+          <IconArchiveOutlineRegular />
           <h2>{label('title')}</h2>
         </div>
-        <p className="bwf-archive-empty">{label('loading')}</p>
+        <p className={css.empty}>{label('loading')}</p>
       </div>
     )
   }
 
   return (
-    <div className="bwf-archive-settings">
-      <div className="bwf-archive-header">
-        <IconArchiveOutline20 />
+    <div className={css.archiveSettings}>
+      <div className={css.header}>
+        <IconArchiveOutlineRegular />
         <h2>{label('title')}</h2>
         <Button size="sm" variant="ghost" onClick={cycleTimeSort} disabled={batchBusy || !!busyId}>
           {timeSortLabel}
@@ -438,22 +384,18 @@ export function ArchivedSettingsSection(props: any): any {
           </Button>
         ) : null}
       </div>
-      {error ? <p className="bwf-archive-error" role="alert">{error}</p> : null}
-      {notice ? <p className="bwf-archive-notice" role="status">{notice}</p> : null}
-      {!loading && sessions.length === 0 ? <p className="bwf-archive-empty">{label('empty')}</p> : null}
+      {error ? <p className={css.error} role="alert">{error}</p> : null}
+      {notice ? <p className={css.notice} role="status">{notice}</p> : null}
+      {!loading && sessions.length === 0 ? <p className={css.empty}>{label('empty')}</p> : null}
       {rows.length > 0 ? (
         <>
-          <div className="bwf-archive-toolbar">
-            <label className="bwf-archive-select-all">
-              <input
-                type="checkbox"
-                className="bwf-archive-checkbox"
-                checked={allSelected}
-                onChange={toggleSelectAll}
-                disabled={batchBusy || !!busyId}
-              />
-              {label('selectAll')}
-            </label>
+          <div className={css.toolbar}>
+            <Checkbox
+              checked={allSelected}
+              onChange={toggleSelectAll}
+              disabled={batchBusy || !!busyId}
+              label={label('selectAll')}
+            />
             <Button
               size="sm"
               variant="ghost"
@@ -471,7 +413,7 @@ export function ArchivedSettingsSection(props: any): any {
               {label('deleteSelected')}{selectedRootRows.length > 0 ? ` (${selectedRootRows.length})` : ''}
             </Button>
           </div>
-          <ul className="bwf-archive-list" role="tree" aria-label={label('title')}>
+          <ul className={css.list} role="tree" aria-label={label('title')}>
             {visibleRows.map(({ node, depth }: { node: any; depth: number }) => {
               const dto = byId.get(node.id)
               const descendantCount = dto?.descendantCount ?? 0
@@ -484,21 +426,21 @@ export function ArchivedSettingsSection(props: any): any {
                   aria-level={depth + 1}
                   aria-selected={selectedIds.has(node.id)}
                   aria-expanded={expandable ? !collapsed : undefined}
-                  className="bwf-archive-row"
-                  style={{ paddingLeft: 8 + depth * 20 }}
+                  className={css.row}
+                  style={{ paddingLeft: 8 + depth * 16 }}
                 >
-                  <input
-                    type="checkbox"
-                    className="bwf-archive-checkbox"
+                  <Checkbox
                     checked={selectedIds.has(node.id)}
                     onChange={() => toggleSelect(node.id)}
                     disabled={batchBusy || !!busyId}
-                    aria-label={`${label('selectSession')}: ${node.title || node.id}`}
+                    label=""
+                    className={css.itemCheckbox}
+                    title={`${label('selectSession')}: ${node.title || node.id}`}
                   />
                   {expandable ? (
                     <button
                       type="button"
-                      className="bwf-archive-toggle"
+                      className={css.toggle}
                       tabIndex={-1}
                       aria-hidden="true"
                       onClick={(e) => {
@@ -506,26 +448,27 @@ export function ArchivedSettingsSection(props: any): any {
                         toggleCollapsed(node.id)
                       }}
                     >
-                      {collapsed ? <IconChevronRightOutline14 /> : <IconChevronDownOutline14 />}
+                      {collapsed ? <IconChevronRightOutlineRegular /> : <IconChevronDownOutlineRegular />}
                     </button>
-                  ) : depth > 0 ? <span style={{ width: 20, flex: 'none' }} /> : null}
-                  {depth > 0 && !expandable ? <span style={{ color: 'var(--dsw-alias-label-tertiary)' }}>└ </span> : null}
-                  <span className="bwf-archive-title" title={node.title}>
+                  ) : (
+                    <span className={css.toggleSpacer} aria-hidden="true" />
+                  )}
+                  <span className={css.title} title={node.title}>
                     {node.title || node.id}
                   </span>
                   {descendantCount > 0 ? (
-                    <span className="bwf-archive-badge" aria-label={`${descendantCount} ${descendantCount===1 ? label('branch_one') : label('branch_other')}`}>
-                      <IconBranchOutline16 size={11} />
+                    <span className={css.badge} aria-label={`${descendantCount} ${descendantCount===1 ? label('branch_one') : label('branch_other')}`}>
+                      <IconBranchOutlineRegular size={11} />
                       {descendantCount}
                     </span>
                   ) : null}
-                  {node.running ? <span aria-label={label('running')} className="bwf-archive-running">●</span> : null}
-                  <span className="bwf-archive-time">{formatTime(node.updatedAt)}</span>
-                  <span className="bwf-archive-actions">
+                  {node.running ? <StateDot state="ongoing" /> : null}
+                  <span className={css.time}>{formatTime(node.updatedAt)}</span>
+                  <span className={css.actions}>
                     <Button
                       size="sm"
                       variant="ghost"
-                      icon={<IconRefreshOutline16 />}
+                      icon={<IconRefreshOutlineRegular />}
                       disabled={busyId === node.id || batchBusy}
                       onClick={() => restore(node.id)}
                     >
@@ -535,7 +478,7 @@ export function ArchivedSettingsSection(props: any): any {
                       <Button
                         size="sm"
                         variant="ghost"
-                        icon={<IconBranchOutline16 />}
+                        icon={<IconBranchOutlineRegular />}
                         disabled={busyId === node.id || batchBusy}
                         onClick={() => restoreBranch(dto)}
                       >
@@ -546,7 +489,7 @@ export function ArchivedSettingsSection(props: any): any {
                       <Button
                         size="sm"
                         variant="outline"
-                        icon={<IconTrashOutline16 />}
+                        icon={<IconTrashOutlineRegular />}
                         disabled={busyId === node.id}
                         onClick={() => setConfirm(dto)}
                       >
@@ -559,7 +502,7 @@ export function ArchivedSettingsSection(props: any): any {
             })}
           </ul>
           {rows.length > visibleLimit ? (
-            <Button className="bwf-archive-show-more" variant="ghost" onClick={showMore}>
+            <Button className={css.showMore} variant="ghost" onClick={showMore}>
               {label('showMore', { n: rows.length - visibleLimit })}
             </Button>
           ) : null}

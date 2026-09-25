@@ -7,9 +7,9 @@ cd "$ROOT"
 TSC="node_modules/.bin/tsc"
 if [ ! -x "$TSC" ] && [ ! -f "$TSC.cmd" ]; then
   if command -v tsc >/dev/null 2>&1; then
-    TSC="tsc"
-  elif [ -x "/root/Job/dsh-ai-manager/node_modules/.bin/tsc" ]; then
-    TSC="/root/Job/dsh-ai-manager/node_modules/.bin/tsc"
+    TSC="$(command -v tsc)"
+  elif [ -x "/usr/local/nodejs/bin/tsc" ]; then
+    TSC="/usr/local/nodejs/bin/tsc"
   else
     echo "build: tsc not found" >&2
     exit 1

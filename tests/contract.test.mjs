@@ -2,13 +2,20 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 
-test('built client retains branch-tree and search-load-more capabilities', () => {
+test('built client retains branch-tree, workspace-tree and archived filter capabilities', () => {
   const client = readFileSync(new URL('../lib/client.js', import.meta.url), 'utf8')
   assert.match(client, /buildSessionTree/)
   assert.match(client, /flattenSessionTree/)
-  assert.match(client, /search\.hasMore/)
-  assert.match(client, /treeRowCount/)
-  assert.match(client, /outside its branch parent/)
+  assert.match(client, /hasMore/)
+  assert.match(client, /setBranchCollapsed/)
+  assert.match(client, /workspace-tree/)
+  assert.match(client, /archivedFilter/)
+  assert.match(client, /onUnarchive/)
+  assert.match(client, /IconTreeCornerRegular/)
+  assert.match(client, /--dsh-branch-indent/)
+  assert.match(client, /--dsh-branch-depth/)
+  assert.match(client, /branchParent/)
+  assert.match(client, /deepBranch/)
 })
 
 test('host no longer exposes the unused full-decompression clusters endpoint', () => {

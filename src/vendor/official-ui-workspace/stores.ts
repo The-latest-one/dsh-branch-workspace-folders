@@ -6,55 +6,78 @@
  * share from the return type.
  */
 import { defineStore, type EngineStoreHandle } from '@deepseek-ai/dsh-client-store'
+import type { SessionListState } from '@deepseek-ai/dsh-api-session-controller/client'
+import type { SessionId } from '@deepseek-ai/dsh-session/types'
+import { reconcileManualOrder, type ArchivedFilter, type SessionRowState } from './tree.ts'
 
 /** Browser-local order account for the hierarchy-free flat Session list. */
 export const FLAT_SESSION_ORDER_KEY = '__flat_session_order__'
 
-/** Session-list grouping mode: workspace sections or one flat recency list. */
-export type SessionGroupBy = 'workspace' | 'flat'
-/** Session order: user-arranged only, or user-arranged plus activity promotion. */
+/** Session-list grouping mode: sibling Workspace sections, a Workspace tree, or one flat list. */
+export type SessionGroupBy = 'workspace' | 'workspace-tree' | 'flat'
+/** Session order: saved manual positions or current recency. */
 export type SessionOrderBy = 'manual' | 'updated'
 
+function copySessionOrders(orders: Readonly<Record<string, readonly string[]>>): Record<string, string[]> {
+  return Object.fromEntries(
+    Object.entries(orders).map(([key, order]) => [key, [...order]]),
+  )
+}
+
+export type SessionOrderSource = {
+  members: Readonly<Record<string, readonly SessionId[]>>
+  summaries: SessionListState['byId']
+  rowState: Pick<SessionRowState, 'pinnedSessionIds' | 'archivedSessionIds'>
+}
+
 /** Workspace browser viewing state persisted across surface remounts and reloads. */
-type WorkspaceViewState = {
+export type WorkspaceViewState = {
   groupBy: SessionGroupBy
   orderBy: SessionOrderBy
-  /** Explicit zero-or-five-session state keyed by Workspace group identity. */
+  /** Explicit group expansion keyed by Workspace identity, including descendants in tree mode. */
   groupExpansion: Record<string, boolean>
-  /** Shared editable order per Workspace group plus the browser-local flat-list account. */
+  /** Saved manual order per Workspace group plus the browser-local flat-list account. */
   sessionOrderByAccount: Record<string, string[]>
-  /** Last observed update timestamps per order account for one-time promotion events. */
-  sessionUpdatedAtByAccount: Record<string, Record<string, number>>
-    /**
-     * Branch-collapse state per order account: each entry lists the branch
-     * root Session ids whose descendant rows are currently hidden.
-     */
-    collapsedBranchesByAccount: Record<string, string[]>
+  /** Archived-row visibility; omitted in pre-filter v5 snapshots and read as 'default'. */
+  archivedFilter?: ArchivedFilter
+  /** Branch-collapse state per order account: branch root Session ids whose descendant rows are hidden. */
+  collapsedBranchesByAccount: Record<string, string[]>
 }
 
 /**
  * Annotation twin of the actions literal below (the export needs a declared
  * return type); drift fails assignability at the defineStore call.
  */
-type WorkspaceViewActions = {
+export type WorkspaceViewActions = {
   setGroupBy: (draft: WorkspaceViewState, mode: SessionGroupBy) => void
-  setOrderBy: (draft: WorkspaceViewState, mode: SessionOrderBy) => void
+  setOrderBy: (
+    draft: WorkspaceViewState,
+    mode: SessionOrderBy,
+    initialOrders: Readonly<Record<string, readonly string[]>>,
+  ) => void
   setGroupExpanded: (draft: WorkspaceViewState, key: string, expanded: boolean) => void
   retainAccountKeys: (draft: WorkspaceViewState, workspaceKeys: readonly string[]) => void
-  syncSessionOrderAccount: (
+  syncSessionOrders: (draft: WorkspaceViewState, orders: Readonly<Record<string, readonly string[]>>) => void
+  setSessionOrder: (
     draft: WorkspaceViewState,
     accountKey: string,
-    order: string[],
-    updatedAt: Record<string, number>,
+    order: readonly string[],
+    initialOrders: Readonly<Record<string, readonly string[]>>,
   ) => void
-  setSessionOrder: (draft: WorkspaceViewState, accountKey: string, order: string[]) => void
-    setBranchCollapsed: (draft: WorkspaceViewState, accountKey: string, nodeId: string, collapsed: boolean) => void
-    setAllBranchesCollapsed: (
-      draft: WorkspaceViewState,
-      accountKey: string,
-      nodeIds: readonly string[],
-      collapsed: boolean,
-    ) => void
+  pinSessionOrder: (
+    draft: WorkspaceViewState,
+    sessionId: string,
+    accountKeys: readonly string[],
+    source: SessionOrderSource,
+  ) => void
+  setArchivedFilter: (draft: WorkspaceViewState, filter: ArchivedFilter) => void
+  setBranchCollapsed: (draft: WorkspaceViewState, accountKey: string, nodeId: string, collapsed: boolean) => void
+  setAllBranchesCollapsed: (
+    draft: WorkspaceViewState,
+    accountKey: string,
+    nodeIds: readonly string[],
+    collapsed: boolean,
+  ) => void
 }
 
 /**
@@ -68,14 +91,22 @@ export function createWorkspaceViewStore(): EngineStoreHandle<WorkspaceViewState
       orderBy: 'updated',
       groupExpansion: {},
       sessionOrderByAccount: {},
-      sessionUpdatedAtByAccount: {},
-        collapsedBranchesByAccount: {},
+      archivedFilter: 'default',
+      collapsedBranchesByAccount: {},
     }),
-      persist: 'dsh.workspace.view.v6',
+    persist: 'dsh.workspace.view.v6',
     actions: {
-      setGroupBy: (d, mode: SessionGroupBy) => { d.groupBy = mode },
-      setOrderBy: (d, mode: SessionOrderBy) => { d.orderBy = mode },
-      setGroupExpanded: (d, key: string, expanded: boolean) => { d.groupExpansion[key] = expanded },
+      setGroupBy: (d, mode: SessionGroupBy) => {
+        d.groupBy = mode
+      },
+      setOrderBy: (d, mode: SessionOrderBy, initialOrders: Readonly<Record<string, readonly string[]>>) => {
+        if (mode === d.orderBy) return
+        d.sessionOrderByAccount = mode === 'manual' ? copySessionOrders(initialOrders) : {}
+        d.orderBy = mode
+      },
+      setGroupExpanded: (d, key: string, expanded: boolean) => {
+        d.groupExpansion[key] = expanded
+      },
       retainAccountKeys: (d, workspaceKeys: readonly string[]) => {
         const retained = new Set(workspaceKeys)
         d.groupExpansion = Object.fromEntries(
@@ -84,43 +115,82 @@ export function createWorkspaceViewStore(): EngineStoreHandle<WorkspaceViewState
         d.sessionOrderByAccount = Object.fromEntries(
           Object.entries(d.sessionOrderByAccount).filter(([key]) => retained.has(key)),
         )
-        d.sessionUpdatedAtByAccount = Object.fromEntries(
-          Object.entries(d.sessionUpdatedAtByAccount).filter(([key]) => retained.has(key)),
-        )
-        d.collapsedBranchesByAccount = Object.fromEntries(
-          Object.entries(d.collapsedBranchesByAccount).filter(([key]) => retained.has(key)),
-        )
-      },
-      syncSessionOrderAccount: (d, accountKey: string, order: string[], updatedAt: Record<string, number>) => {
-        d.sessionOrderByAccount[accountKey] = order
-        d.sessionUpdatedAtByAccount[accountKey] = updatedAt
-      },
-        setBranchCollapsed: (d, accountKey: string, nodeId: string, collapsed: boolean) => {
-          const list = Array.isArray(d.collapsedBranchesByAccount[accountKey])
-            ? d.collapsedBranchesByAccount[accountKey].slice()
-            : []
-          const index = list.indexOf(nodeId)
-          if (collapsed) {
-            if (index === -1) list.push(nodeId)
-          } else if (index !== -1) {
-            list.splice(index, 1)
-          }
-          d.collapsedBranchesByAccount[accountKey] = list
-        },
-        setAllBranchesCollapsed: (d, accountKey: string, nodeIds: readonly string[], collapsed: boolean) => {
-          const prev = new Set(
-            Array.isArray(d.collapsedBranchesByAccount[accountKey])
-              ? d.collapsedBranchesByAccount[accountKey]
-              : [],
+        if (d.collapsedBranchesByAccount) {
+          d.collapsedBranchesByAccount = Object.fromEntries(
+            Object.entries(d.collapsedBranchesByAccount).filter(([key]) => retained.has(key)),
           )
-          for (const id of nodeIds) {
-            if (collapsed) prev.add(id)
-            else prev.delete(id)
-          }
-          d.collapsedBranchesByAccount[accountKey] = Array.from(prev)
-        },
-      setSessionOrder: (d, accountKey: string, order: string[]) => {
-        d.sessionOrderByAccount[accountKey] = order
+        }
+      },
+      syncSessionOrders: (d, orders: Readonly<Record<string, readonly string[]>>) => {
+        if (d.orderBy !== 'manual') return
+        Object.assign(d.sessionOrderByAccount, copySessionOrders(orders))
+      },
+      setSessionOrder: (
+        d,
+        accountKey: string,
+        order: readonly string[],
+        initialOrders: Readonly<Record<string, readonly string[]>>,
+      ) => {
+        if (d.orderBy === 'updated') d.sessionOrderByAccount = copySessionOrders(initialOrders)
+        else Object.assign(d.sessionOrderByAccount, copySessionOrders(initialOrders))
+        d.orderBy = 'manual'
+        d.sessionOrderByAccount[accountKey] = [...order]
+      },
+      pinSessionOrder: (
+        d,
+        sessionId: string,
+        accountKeys: readonly string[],
+        source: SessionOrderSource,
+      ) => {
+        const selected = new Set(accountKeys)
+        d.sessionOrderByAccount = Object.fromEntries(
+          Object.entries(source.members).map(([key, members]) => {
+            const order = reconcileManualOrder(
+              members,
+              d.sessionOrderByAccount[key],
+              source.summaries,
+              source.rowState,
+            )
+            return [
+              key,
+              selected.has(key) ? [sessionId, ...order.filter((id) => id !== sessionId)] : order,
+            ]
+          }),
+        )
+      },
+      setArchivedFilter: (d, filter: ArchivedFilter) => {
+        d.archivedFilter = filter
+      },
+      setBranchCollapsed: (d, accountKey: string, nodeId: string, collapsed: boolean) => {
+        if (!d.collapsedBranchesByAccount) d.collapsedBranchesByAccount = {}
+        const list = Array.isArray(d.collapsedBranchesByAccount[accountKey])
+          ? d.collapsedBranchesByAccount[accountKey].slice()
+          : []
+        const index = list.indexOf(nodeId)
+        if (collapsed) {
+          if (index === -1) list.push(nodeId)
+        } else if (index !== -1) {
+          list.splice(index, 1)
+        }
+        d.collapsedBranchesByAccount[accountKey] = list
+      },
+      setAllBranchesCollapsed: (
+        d,
+        accountKey: string,
+        nodeIds: readonly string[],
+        collapsed: boolean,
+      ) => {
+        if (!d.collapsedBranchesByAccount) d.collapsedBranchesByAccount = {}
+        const prev = new Set(
+          Array.isArray(d.collapsedBranchesByAccount[accountKey])
+            ? d.collapsedBranchesByAccount[accountKey]
+            : [],
+        )
+        for (const id of nodeIds) {
+          if (collapsed) prev.add(id)
+          else prev.delete(id)
+        }
+        d.collapsedBranchesByAccount[accountKey] = Array.from(prev)
       },
     },
   })
