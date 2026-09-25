@@ -77,7 +77,16 @@
 
 ## 📦 安装与集成
 
-### 方式一：一键自动安装到本地 DSH Profile（推荐）
+### 方式一：本地 Profile 热装配转正（推荐，免重启，左上角插件列表立即可见）
+
+如果当前 DSH 环境装有 `dsh-super-injector`（开发基建），且希望插件正式出现在左上角侧边栏的“已安装”插件卡片中：
+
+```bash
+# 自动修改 ~/.dsh/profiles/web/package.json 并动态挂载（免重启生效）：
+dev_install_package {"dir": "/path/to/dsh-branch-workspace-folders"}
+```
+
+### 方式二：一键自动安装到本地 DSH Profile（生产态部署）
 
 ```bash
 npm run install:dsh
@@ -85,19 +94,17 @@ npm run install:dsh
 
 脚本将自动执行：双端类型检查 -> 编译构建 -> npm 打包 -> 部署至 `${DSH_HOME:-$HOME/.dsh}/profiles/web` -> 自愈 node_modules junction 并重启 Web 服务。
 
-### 方式二：超级模组运行时热注入（开发免重启）
-
-如果当前 DSH 环境装有 `dsh-super-injector`（开发基建）：
+### 方式三：超级模组运行时热注入（开发调试态，零配置污染）
 
 ```bash
-# 1. 运行时直接注入（不修改 patch、不重启）：
+# 1. 运行时直接注入内存（不修改 patch、不修改 package.json、不重启）：
 dev_inject_plugin {"dir": "/path/to/dsh-branch-workspace-folders"}
 
 # 2. 修改代码后执行确定性热重载：
 dev_reload_package {"packageName": "dsh-branch-workspace-folders"}
 ```
 
-### 方式三：手动配置
+### 方式四：手动配置
 
 在 DSH profile 的 `package.json` 中配置：
 
@@ -117,6 +124,22 @@ dev_reload_package {"packageName": "dsh-branch-workspace-folders"}
 ```
 
 并在 profile 目录运行 `pnpm install` 后重启服务。
+
+---
+
+### 💡 常见疑问：为什么左上角侧边栏插件列表中找不到本插件？
+
+很多开发者在通过 `dev_inject_plugin` 注入插件后，发现插件在侧边栏实际已完全生效，但在左上角“插件（Plugins）”页面却没有卡片，误以为“未被识别”。其底层机制如下：
+
+1. **左上角界面（`ui-plugin-manager`）的检索源**：
+   - 官方插件管理界面调用宿主 `remote.pluginManager.listBundles()`；
+   - 该接口**只扫描 `~/.dsh/profiles/web/package.json`** 中的 `dependencies` 与 `dsh.profile.bundles` 清单；
+   - 官方仅将写入配置文件的 Bundle 识别为“已安装（Installed）”并在左上角画卡片。
+2. **运行时注入（`dev_inject_plugin`）的设计哲学**：
+   - 为保障开发体验极致纯净，注入器遵循“**不碰 package.json / 不碰 patch / 零配置污染**”原则，直接通过内存调用 Cordis `ctx.loader.create()` 动态注入 Fiber 节点；
+   - 因此插件**已在当前运行时完整生效**（可在 `dev_plugin_status` 或系统设置的“超级模组”管理面板中查看），但官方 Profile 扫描器因配置文件未修改而不会在其列表中展示。
+3. **转正方法**：
+   - 若需在左上角插件管理器中显示并持久化管理，只需执行上述 **方式一（`dev_install_package`）** 或 **方式二（`npm run install:dsh`）**，将插件正式写入 profile 即可。
 
 ---
 

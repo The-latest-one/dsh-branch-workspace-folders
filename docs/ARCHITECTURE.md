@@ -14,6 +14,7 @@
 7. [Host 端：会话级联物理永久删除 (Purge) 事务引擎](#7-host-端会话级联物理永久删除-purge-事务引擎)
 8. [安全防线与网络隔离审计](#8-安全防线与网络隔离审计)
 9. [核心设计不变量与陷阱防护](#9-核心设计不变量与陷阱防护)
+10. [插件装配与宿主可见性双轨生命周期](#10-插件装配与宿主可见性双轨生命周期)
 
 ---
 
@@ -237,3 +238,44 @@ DSH 的底层日志为追加写（append-only）的 Zstd 压缩流。如果程�
    严禁在 `Rows.tsx` 中硬编码行操作菜单。必须使用 `renderSlot('sidebar.workspaces.session.menu.item')`，否则会阻断官方 Pin 及其他插件的插槽扩展。
 4. **子智能体（Subagent）隔离**：
    构建树时必须过滤 `origin === 'subagent'` 的瞬态会话，防止海量子智能体会话污染侧边栏。
+
+---
+
+## 10. 插件装配与宿主可见性双轨生命周期
+
+DSH 生态在架构上存在两套插件挂载途径，它们在生命周期、配置文件依赖度以及 UI 管理界面可见性上存在明确分工：
+
+### 10.1 双轨机制对比表
+
+| 维度 | 途径 A：动态内存热注入 (Dynamic Injected Fiber) | 途径 B：Profile Bundle 持久化装配 (Config-Backed Bundle) |
+|---|---|---|
+| **生效入口** | `dev_inject_plugin`（开发调试态） | `dev_install_package` 或 `npm run install:dsh`（生产持久态） |
+| **底层实现** | 建立软链接 -> `ctx.loader.create()` 动态注入 Fiber 节点 | 写入 `~/.dsh/profiles/<profile>/package.json` -> `pnpm install` |
+| **配置文件污染** | **零接触**（不碰 `package.json`、不碰 `cordis.patch.yml`） | 写入 `dependencies` 与 `dsh.profile.bundles` |
+| **侧边栏左上角“插件”页** | **不可见**（官方 `listBundles()` 严格只扫描 Profile 配置文件） | **正常显示卡片**（展示 package 描述、版本、图标、支持开关与配置） |
+| **插件运行时生效状态** | **完全生效**（Host API、Client Shadowing 全部就绪） | **完全生效** |
+| **管理可见位置** | 系统设置中的“超级模组”管理面板、`dev_plugin_status` 清单 | 侧边栏左上角“插件”页面（`ui-plugin-manager`） |
+
+### 10.2 左上角检索数据流分析 (ui-plugin-manager)
+```
+Browser Web UI (左上角侧边栏插件页)
+  │
+  ├── 1. 发起远程 RPC: this.ctx.remote.pluginManager.listBundles()
+  │
+  ▼
+Host Node.js (dsh-plugin-manager/lib/index.js)
+  │
+  ├── 2. readProfileManifest("dsh", this.profile.dir)
+  │      读取 ~/.dsh/profiles/<profile>/package.json
+  │
+  ├── 3. 提取 manifest.dsh.profile.bundles 与 manifest.dependencies
+  │
+  ├── 4. 仅对出现在配置文件中的 package 扫描 bundleManifest
+  │      (未登记在 package.json 中的动态注入插件在此处被完全忽略)
+  │
+  └── 5. 返回 BundleInfo[] 数组给前端绘制“已安装”卡片列表
+```
+
+### 10.3 动态态与持久态的无缝转正
+在开发调试阶段，推荐使用 `dev_inject_plugin` + `dev_reload_package`，保持系统配置的绝对干净；
+当插件准备转入正式日常使用并需要呈现在左上角管理界面时，只需调用 `dev_install_package {"dir": "..."}`，即可自动补全 profile 声明，实现两套生命周期的高效互通。
