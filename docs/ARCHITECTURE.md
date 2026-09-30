@@ -1,6 +1,6 @@
 # dsh-branch-workspace-folders 架构与核心机制技术白皮书
 
-本文档面向核心维护者与架构审查员，系统阐述 `dsh-branch-workspace-folders`（版本: v0.1.15）在 DeepSeek Harness (DSH) 官方生态下的内部系统拓扑、事务机制与算法契约。
+本文档面向核心维护者与架构审查员，系统阐述 `dsh-branch-workspace-folders`（版本: v0.2.0，适配 DSH: v0.2.0-rc.2）在 DeepSeek Harness (DSH) 官方生态下的内部系统拓扑、事务机制与算法契约。
 
 ---
 
@@ -123,6 +123,13 @@
   对于 `depth >= 2` 的深度分叉，采用纯 CSS `repeating-linear-gradient` 在背景绘制 16px 间隔的极细导轨线（`var(--dsw-alias-border-l4)`），0 额外 DOM 开销，直观展现多级继承关系。
 - **WCAG AA 归档对比度保全**：
   在归档行（`opacity: 0.48`）中，分支子会话的标题颜色强制覆盖为 Primary，防止次级色叠加透明度后发生低对比度辨识障碍。
+- **根会话与子分支折叠器视觉分流**：
+  - **顶级根会话（`depth === 0`）**：采用官方实心小三角（`IconTriangleRightFillRegular`），折叠时指向右侧，展开时平滑旋转 90 度向下（150ms 动效），视觉锚点沉稳鲜明，与工作区目录设计同构；
+  - **子分支父会话（`depth > 0`）**：维持轻量级细线 Chevron（`IconChevronRightOutlineRegular` / `IconChevronDownOutlineRegular`），避免多层嵌套下的视觉噪音与主干混淆。
+- **超长标题平滑跑马灯 (`useTitleMarquee`)**：
+  对齐 DSH 0.2.0-rc.2 规范，采用 `requestAnimationFrame` 驱动以 `0.03px/ms` 极慢速平滑爬行，配合两端 12px 动态渐隐遮罩（`mask-image`）与 `text-overflow: clip`，在保证 800ms `HoverCard` 完整展现的前提下优雅呈现超长标题。
+- **全生态行级插槽兼容 (Leading & Hover Slots)**：
+  严格实现 DSH 0.2.0-rc.2 两段式会话行插槽，前置 16px 单元格仲裁提供 `sidebar.session.row.leading`（支持自动化与定时任务标记），并在悬浮卡片中段注入 `sidebar.session.row.hover` 插槽。
 
 ---
 

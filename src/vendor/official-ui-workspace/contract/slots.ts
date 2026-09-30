@@ -42,6 +42,16 @@ declare module '@deepseek-ai/dsh-client-ui-slots' {
       scope: 'root'
       owner: { sessionId: SessionId; displayTitle: string }
     }
+    'sidebar.session.row.leading': {
+      kind: 'list'
+      scope: 'root'
+      owner: { sessionId: SessionId }
+    }
+    'sidebar.session.row.hover': {
+      kind: 'list'
+      scope: 'root'
+      owner: { sessionId: SessionId }
+    }
   }
 }
 
@@ -103,6 +113,13 @@ export interface WorkspaceBrowserProps {
   createWorkspace: (input: { path: string }) => Promise<WorkspaceView>
   useDirectoryFlow: (selector: (occupied: boolean) => any) => any
   useHostInfo: (selector: (facts: RemoteHostFacts) => any) => any
+  useShortcuts?: any
+  useWorkspaceShortcuts?: any
+  requestSearch?: () => void
+  requestAddWorkspace?: () => void
+  closeAddWorkspace?: () => void
+  setDirectoryBusy?: (busy: boolean) => void
+  dismissForkError?: () => void
   renderSlot?: (slotName: string, ...args: any[]) => any
   t: (key: string, params?: any) => string
   usePanelInfo?: <T = any>(

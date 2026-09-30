@@ -1,6 +1,6 @@
 {
   "name": "dsh-branch-workspace-folders",
-  "version": "0.1.15",
+  "version": "0.2.0",
   "description": "DSH Web sidebar plugin: group forked sessions under their root session in the left workspace area.",
   "private": false,
   "type": "module",
@@ -104,6 +104,7 @@
         "@deepseek-ai/dsh-client-ui-layout",
         "@deepseek-ai/dsh-client-ui-renderer",
         "@deepseek-ai/dsh-client-ui-session",
+        "@deepseek-ai/dsh-client-shortcuts",
         "@deepseek-ai/dsh-client-ui-sidebar",
         "@deepseek-ai/dsh-client-ui-slots",
         "@deepseek-ai/dsh-client-ui-settings"

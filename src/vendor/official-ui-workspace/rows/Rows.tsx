@@ -35,6 +35,69 @@ import { countDescendants, aggregateDescendantStatus, type BranchNode } from '..
 import { uiLabel } from '../ui-label.ts'
 import css from './Rows.module.css'
 
+const MIN_TITLE_REVEAL_PX = 8
+const TITLE_MARQUEE_PX_PER_MS = 0.03
+
+function placeTitle(title: HTMLElement, left: number, range: number) {
+  if (typeof title.scrollTo === 'function') {
+    title.scrollTo({ left, behavior: 'instant' as ScrollBehavior })
+  } else {
+    title.scrollLeft = left
+  }
+  if (left > 0) title.dataset.scrolled = ''
+  else delete title.dataset.scrolled
+  if (left < range) title.dataset.clipped = ''
+  else delete title.dataset.clipped
+}
+
+function restTitle(title: HTMLElement) {
+  if (typeof title.scrollTo === 'function') {
+    title.scrollTo({ left: 0, behavior: 'instant' as ScrollBehavior })
+  } else {
+    title.scrollLeft = 0
+  }
+  delete title.dataset.scrolled
+  delete title.dataset.clipped
+}
+
+function useTitleMarquee(titleRef: React.RefObject<HTMLElement | null>) {
+  const frame = useRef(0)
+  useEffect(() => {
+    return () => {
+      cancelAnimationFrame(frame.current)
+    }
+  }, [])
+  return useMemo(() => ({
+    enter: () => {
+      if (titleRef.current === null) return
+      const element = titleRef.current
+      const range = element.scrollWidth - element.clientWidth
+      if (range <= MIN_TITLE_REVEAL_PX) return
+      if (typeof window !== 'undefined' && window.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches) {
+        placeTitle(element, range, range)
+        return
+      }
+      cancelAnimationFrame(frame.current)
+      let previous: number | undefined
+      let position = 0
+      const step = (now: number) => {
+        position += previous === undefined ? 0 : (now - previous) * TITLE_MARQUEE_PX_PER_MS
+        previous = now
+        placeTitle(element, Math.min(position, range), range)
+        if (position < range) {
+          frame.current = requestAnimationFrame(step)
+        }
+      }
+      frame.current = requestAnimationFrame(step)
+    },
+    leave: () => {
+      cancelAnimationFrame(frame.current)
+      if (titleRef.current === null) return
+      restTitle(titleRef.current)
+    },
+  }), [titleRef])
+}
+
 /** The standard locale seat, prop-passed from the browser root. */
 type RowTranslate = WorkspaceBrowserProps['t']
 
@@ -116,6 +179,7 @@ export function ProjectRowItem({
   actions,
   drag,
   home,
+  newShortcut,
   t,
   currentCollapsed,
   containsCurrentDescendant,
@@ -126,6 +190,7 @@ export function ProjectRowItem({
   actions?: { rename: () => void; delete: () => void } | undefined
   drag?: WorkspaceRowDragProps | undefined
   home?: string | undefined
+  newShortcut?: any
   t: RowTranslate
   currentCollapsed?: boolean | undefined
   containsCurrentDescendant?: boolean | undefined
@@ -142,6 +207,7 @@ export function ProjectRowItem({
   ]
   const ownRow = (
     <div
+      data-row-key={`workspace:${row.key}`}
       className={clsx(css.projectRow, menuOpen && css.menuOpen)}
       role="treeitem"
       aria-expanded={row.expanded}
@@ -200,7 +266,7 @@ export function ProjectRowItem({
           />
         )}
         <Tooltip
-          label={t('actions.newSession')}
+          label={newShortcut?.keystroke ? `${t('actions.newSession')} (${newShortcut.keystroke})` : t('actions.newSession')}
           side="bottom"
           align="end"
           delayMs={500}
@@ -365,13 +431,17 @@ function SessionHoverContent({
   now,
   t,
   path = [],
+  renderSlot,
 }: {
   node: SessionNode
   now: number
   t: RowTranslate
   path?: readonly string[]
+  renderSlot?: any
 }) {
-  const statuses = sessionStatuses(node, t)
+  const statuses = sessionStatuses(node, t).filter(
+    (status) => !(node.archived && (status.state === 'done' || status.state === 'idle'))
+  )
   const pathLabel = path.length > 0 ? path.join(' / ') : undefined
   return (
     <div className={css.hoverContent}>
@@ -384,6 +454,7 @@ function SessionHoverContent({
       {!node.blank && (
         <div className={css.hoverTime}>{hoverTimeLabel(node.updatedAt, now, t)}</div>
       )}
+      {renderSlot?.('sidebar.session.row.hover', { sessionId: node.id })}
       {statuses.map((status) => (
         <div className={css.hoverStatus} key={status.label}>
           <StateDot state={status.state} />
@@ -542,6 +613,8 @@ export function SessionNodeItem({
   const [rowHovered, setRowHovered] = useState(false)
   const menuOpenState = useMemo(() => [menuOpen, setMenuOpen], [menuOpen])
   const rowRef = useRef<HTMLDivElement>(null)
+  const titleRef = useRef<HTMLSpanElement>(null)
+  const marquee = useTitleMarquee(titleRef)
   const hasBranchToggle = branchChildren.length > 0 && onToggleCollapse !== undefined
 
   useEffect(() => {
@@ -553,6 +626,7 @@ export function SessionNodeItem({
   const ownRow = (
     <div
       ref={rowRef}
+      data-row-key={`session:${node.id}`}
       className={clsx(
         css.sessionRow,
         selected && css.selected,
@@ -584,9 +658,11 @@ export function SessionNodeItem({
       }}
       onPointerEnter={() => {
         setRowHovered(true)
+        marquee.enter()
       }}
       onPointerLeave={() => {
         setRowHovered(false)
+        marquee.leave()
       }}
       draggable={draggable}
       onDragStart={
@@ -640,7 +716,11 @@ export function SessionNodeItem({
               : undefined
           }
         >
-          {collapsed ? (
+          {depth === 0 ? (
+            <IconTriangleRightFillRegular
+              className={clsx(css.arrow, !collapsed && css.arrowOpen)}
+            />
+          ) : collapsed ? (
             <IconChevronRightOutlineRegular />
           ) : (
             <IconChevronDownOutlineRegular />
@@ -652,15 +732,18 @@ export function SessionNodeItem({
         </span>
       ) : null}
 
-      {/* Status dot */}
-      {(!flat || showStatus) && (
-        <span className={css.slot}>
-          {!row.archived && showStatus && <SessionStatusDots statuses={statuses} />}
-        </span>
-      )}
+      {/* Status dot / Leading slot */}
+      <span className={css.slot}>
+        {!row.archived && !row.blank && (
+          showStatus
+            ? <SessionStatusDots statuses={statuses} />
+            : (renderSlot?.('sidebar.session.row.leading', { sessionId: node.id }) ?? null)
+        )}
+      </span>
 
       {/* Title */}
       <span
+        ref={titleRef}
         className={css.title}
         onDoubleClick={
           row.blank
@@ -788,7 +871,7 @@ export function SessionNodeItem({
   return (
     <HoverCard
       anchor={ownRow}
-      content={<SessionHoverContent node={node} now={now} t={t} path={path} />}
+      content={<SessionHoverContent node={node} now={now} t={t} path={path} renderSlot={renderSlot} />}
       openDelayMs={800}
       disabled={menuOpen || drag?.active === true}
       copyText={row.blank ? undefined : row.title}

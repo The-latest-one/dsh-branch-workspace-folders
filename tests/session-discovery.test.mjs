@@ -13,10 +13,11 @@ test('session file resolution chooses highest version format', async () => {
   writeFileSync(join(sessionDir, 'session.jsonl.zstd'), 'v0-content')
   writeFileSync(join(sessionDir, 'session.v2.jsonl.zstd'), 'v2-content')
   writeFileSync(join(sessionDir, 'session.v3.jsonl.zstd'), 'v3-content')
+  writeFileSync(join(sessionDir, 'session.v4.jsonl.zstd'), 'v4-content')
   writeFileSync(join(sessionDir, 'session.lock'), '')
 
   // Test the regex and priority algorithm used in src/index.ts
-  const entries = ['session.jsonl.zstd', 'session.v2.jsonl.zstd', 'session.v3.jsonl.zstd', 'session.lock']
+  const entries = ['session.jsonl.zstd', 'session.v2.jsonl.zstd', 'session.v3.jsonl.zstd', 'session.v4.jsonl.zstd', 'session.lock']
   let bestFile
   let bestVersion = -1
   for (const name of entries) {
@@ -29,8 +30,8 @@ test('session file resolution chooses highest version format', async () => {
     }
   }
 
-  assert.equal(bestFile, 'session.v3.jsonl.zstd')
-  assert.equal(bestVersion, 3)
+  assert.equal(bestFile, 'session.v4.jsonl.zstd')
+  assert.equal(bestVersion, 4)
 
   rmSync(testDir, { recursive: true, force: true })
 })

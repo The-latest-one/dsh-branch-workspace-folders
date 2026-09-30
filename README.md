@@ -1,9 +1,9 @@
 # dsh-branch-workspace-folders
 
-[![Version](https://img.shields.io/badge/version-v0.1.15-blue.svg)](package.json)
-[![DSH Compatibility](https://img.shields.io/badge/DSH-v0.1.7--rc.1-success.svg)](package.json)
+[![Version](https://img.shields.io/badge/version-v0.2.0-blue.svg)](package.json)
+[![DSH Compatibility](https://img.shields.io/badge/DSH-v0.2.0--rc.2-success.svg)](package.json)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
-[![Tests](https://img.shields.io/badge/tests-33%2F33%20passing-brightgreen.svg)](tests/)
+[![Tests](https://img.shields.io/badge/tests-45%2F45%20passing-brightgreen.svg)](tests/)
 
 > DeepSeek Harness (DSH) 官方生态全功能增强插件：严格基于官方原生 UI/UX 设计契约，深度重构侧边栏工作区与会话树。提供**全量非递归防爆栈会话树**、**`placeFork` 智能分叉排序聚类**、**原生 L 型树导轨与字阶分层**、**折叠场景状态通道冒泡**、**已归档三态过滤**以及**会话级联物理永久删除（Purge）安全事务引擎**。
 
@@ -14,9 +14,12 @@
 ### 1. 树状层级呈现与视觉重构 (Universal Fork Tree & Visual Hierarchy)
 - **多分组模式通用覆盖**：无论用户选择 `workspace`（工作区分组）、`workspace-tree`（物理目录树）还是 `flat`（全局平铺），所有分叉会话均基于 `parentId` 聚合归入对应的根会话之下。
 - **双轨缩进解耦系统**：独立分配 `--dsh-branch-indent: calc(depth * 16px)` 与 `--dsh-workspace-indent`，彻底解决在 `workspace-tree` 模式下目录缩进被子会话覆盖所导致的负缩进视觉错位。
+- **超长标题平滑跑马灯 (`useTitleMarquee`) 与动效键契约**：对齐 DSH 0.2.0-rc.2 视觉体验，会话行悬浮时自动延迟平滑滚动超长标题，离开时自动复位；全量节点注入 `data-row-key` 契约，完美配合官方 `AnimatedRows` 的 FLIP 布局动效。
+- **全生态行级插槽兼容 (Leading & Hover Slots)**：严格实现官方 0.2.0-rc.2 会话行两段式插槽协议，在空闲 16px 单元格仲裁提供 `sidebar.session.row.leading`（支持自动化定时任务标记），在悬浮卡片提供 `sidebar.session.row.hover` 插槽。
 - **排版字阶分层 (Typography Hierarchy)**：
   - **根会话 / 父会话**：启用 `font-weight: 500`（Medium）并保持最高对比度的文本主色，形成清晰的视觉锚点；
-  - **分支子会话**：字色降低至次级文本色（`var(--dsw-alias-label-secondary)`），悬停（hover）或选中（selected）时自适应提亮；
+  - **根会话实心三角折叠指示**：根会话（`depth === 0`）折叠按钮统一采用官方实心小三角（`IconTriangleRightFillRegular`），展开时顺时针旋转 90 度向下，与子分支的细线箭头形成直观的几何区隔，方便一眼找到家族树源头；
+  - **分支子会话**：字色降低至次级文本色（`var(--dsw-alias-label-secondary)`），折叠按钮保持轻巧细线 Chevron（`IconChevronRightOutlineRegular`），悬停（hover）或选中（selected）时自适应提亮；
   - **L 型物理拐角与网格导轨**：引入 DSH 原生 `IconTreeCornerRegular` 矢量导轨，对于 `depth >= 2` 的深层嵌套自动启用纯 CSS 背景多级辅助线（`.deepBranch`），0 额外 DOM 开销；
   - **WCAG AA 对比度保全**：归档会话（`opacity: 0.48`）下的子会话标题自动强制提升为 Primary 颜色，防止次级色与半透明叠加导致对比度低于 4.5:1 的无障碍标准。
 
@@ -154,7 +157,7 @@ npm run typecheck
 # 2. 编译 Host 声明文件 + tsdown 打包客户端 client.js + 自动内联 CSS
 npm run build
 
-# 3. 运行自动化测试套件（必须全部 33/33 PASS）
+# 3. 运行自动化测试套件（必须全部 44/44 PASS）
 npm test
 
 # 4. 如当前处于 DSH 运行时，触发插件热重载生效

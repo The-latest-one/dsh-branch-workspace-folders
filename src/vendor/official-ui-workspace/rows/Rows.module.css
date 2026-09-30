@@ -197,6 +197,28 @@
   flex: 1;
 }
 
+.sessionRow .title[data-scrolled] {
+  -webkit-mask-image: linear-gradient(90deg, transparent, #000 12px);
+  mask-image: linear-gradient(90deg, transparent, #000 12px);
+}
+
+.sessionRow .title[data-clipped] {
+  -webkit-mask-image: linear-gradient(270deg, transparent, #000 12px);
+  mask-image: linear-gradient(270deg, transparent, #000 12px);
+}
+
+.sessionRow .title[data-scrolled][data-clipped] {
+  -webkit-mask-image: linear-gradient(90deg, transparent, #000 12px, #000 calc(100% - 12px), transparent);
+  mask-image: linear-gradient(90deg, transparent, #000 12px, #000 calc(100% - 12px), transparent);
+}
+
+@media (hover: hover) {
+  .sessionRow:hover .title,
+  .sessionRow.menuOpen .title {
+    text-overflow: clip;
+  }
+}
+
 .meta {
   overflow: hidden;
   text-overflow: ellipsis;

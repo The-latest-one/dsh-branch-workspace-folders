@@ -436,6 +436,7 @@ function SessionTree({
   collapsedBranchesByAccount,
   onToggleBranchCollapse,
   home,
+  newShortcut,
   t,
   revealSessionId,
   onSessionRevealed,
@@ -461,6 +462,7 @@ function SessionTree({
   collapsedBranchesByAccount: Record<string, string[]>
   onToggleBranchCollapse: (accountKey: string, sessionId: SessionId) => void
   home: string | undefined
+  newShortcut?: any
   t: WorkspaceBrowserProps['t']
   revealSessionId?: string | undefined
   onSessionRevealed: (id: string) => void
@@ -698,6 +700,7 @@ function SessionTree({
           containsCurrentDescendant={currentAncestors.has(group.key)}
           currentCollapsed={!group.expanded && group.containsCurrent}
           home={home}
+          newShortcut={newShortcut}
           t={t}
           onToggle={() => {
             if (group.expanded) {
@@ -918,9 +921,18 @@ export function WorkspaceBrowser({
   searchResultLimit,
   useDirectoryFlow,
   useHostInfo,
+  useShortcuts,
+  useWorkspaceShortcuts,
+  requestSearch,
+  requestAddWorkspace,
+  closeAddWorkspace,
+  setDirectoryBusy,
+  dismissForkError,
   renderSlot,
   t,
 }: WorkspaceBrowserProps) {
+  const shortcuts = typeof useShortcuts === 'function' ? useShortcuts((s: any) => s) : undefined
+  const newShortcut = Array.isArray(shortcuts) ? shortcuts.find((s: any) => s?.id === 'session.new') : undefined
   const home = useHostInfo((info: any) => info?.home)
   const list = useSessions((state: any) => state)
   const workspaces = useWorkspaces((state: any) => state.items)
@@ -1638,6 +1650,7 @@ export function WorkspaceBrowser({
               collapsedBranchesByAccount={collapsedBranchesByAccount}
               onToggleBranchCollapse={handleToggleBranchCollapse}
               home={home}
+              newShortcut={newShortcut}
               t={t}
               revealSessionId={revealSessionId}
               onSessionRevealed={acknowledgeSessionReveal}

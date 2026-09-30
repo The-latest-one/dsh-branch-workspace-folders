@@ -16,6 +16,10 @@ test('built client retains branch-tree, workspace-tree and archived filter capab
   assert.match(client, /--dsh-branch-depth/)
   assert.match(client, /branchParent/)
   assert.match(client, /deepBranch/)
+  assert.match(client, /sidebar\.session\.row\.leading/)
+  assert.match(client, /sidebar\.session\.row\.hover/)
+  assert.match(client, /data-row-key/)
+  assert.match(client, /useTitleMarquee/)
 })
 
 test('host no longer exposes the unused full-decompression clusters endpoint', () => {
