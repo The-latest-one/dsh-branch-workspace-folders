@@ -16,7 +16,7 @@ This project adheres to the **Grounded Verification Gate** and core architectura
 ### Getting Started
 ```bash
 # 1. Clone repository
-git clone https://github.com/JIaDE-YX/dsh-branch-workspace-folders.git
+git clone https://github.com/The-latest-one/dsh-branch-workspace-folders.git
 cd dsh-branch-workspace-folders
 
 # 2. Install dependencies

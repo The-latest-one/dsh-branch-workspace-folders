@@ -116,10 +116,10 @@
     }
   },
   "license": "MIT",
-  "author": "JIaDE-YX",
+  "author": "The-latest-one",
   "repository": {
     "type": "git",
-    "url": "https://github.com/JIaDE-YX/dsh-branch-workspace-folders.git"
+    "url": "https://github.com/The-latest-one/dsh-branch-workspace-folders.git"
   },
   "keywords": [
     "dsh",
@@ -131,9 +131,9 @@
   "engines": {
     "node": ">=20"
   },
-  "homepage": "https://github.com/JIaDE-YX/dsh-branch-workspace-folders#readme",
+  "homepage": "https://github.com/The-latest-one/dsh-branch-workspace-folders#readme",
   "bugs": {
-    "url": "https://github.com/JIaDE-YX/dsh-branch-workspace-folders/issues"
+    "url": "https://github.com/The-latest-one/dsh-branch-workspace-folders/issues"
   },
   "publishConfig": {
     "access": "public"

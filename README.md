@@ -4,8 +4,8 @@
 
 [![Version](https://img.shields.io/badge/version-v0.2.0-blue.svg)](package.json)
 [![DSH Compatibility](https://img.shields.io/badge/DSH-v0.2.0--rc.2-success.svg)](package.json)
-[![CI](https://github.com/JIaDE-YX/dsh-branch-workspace-folders/actions/workflows/ci.yml/badge.svg)](https://github.com/JIaDE-YX/dsh-branch-workspace-folders/actions)
-[![GitHub Release](https://img.shields.io/github/v/release/JIaDE-YX/dsh-branch-workspace-folders)](https://github.com/JIaDE-YX/dsh-branch-workspace-folders/releases)
+[![CI](https://github.com/The-latest-one/dsh-branch-workspace-folders/actions/workflows/ci.yml/badge.svg)](https://github.com/The-latest-one/dsh-branch-workspace-folders/actions)
+[![GitHub Release](https://img.shields.io/github/v/release/The-latest-one/dsh-branch-workspace-folders)](https://github.com/The-latest-one/dsh-branch-workspace-folders/releases)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![Tests](https://img.shields.io/badge/tests-45%2F45%20passing-brightgreen.svg)](tests/)
 
@@ -103,10 +103,10 @@ For detailed topological maps, complexity bounds, sequence diagrams, and formal 
 
 ```bash
 # Install directly from GitHub
-dsh plugin --profile web add github:JIaDE-YX/dsh-branch-workspace-folders
+dsh plugin --profile web add github:The-latest-one/dsh-branch-workspace-folders
 
 # Or pin a specific released tag
-dsh plugin --profile web add github:JIaDE-YX/dsh-branch-workspace-folders#v0.2.0
+dsh plugin --profile web add github:The-latest-one/dsh-branch-workspace-folders#v0.2.0
 
 # Or via npm registry (once published)
 dsh plugin --profile web add dsh-branch-workspace-folders
@@ -114,7 +114,7 @@ dsh plugin --profile web add dsh-branch-workspace-folders
 
 ### Method 2: Pre-built Offline Tarball (No Compile Rights Required)
 
-Download `dsh-branch-workspace-folders-0.2.0.tgz` from the [GitHub Releases](https://github.com/JIaDE-YX/dsh-branch-workspace-folders/releases) page:
+Download `dsh-branch-workspace-folders-0.2.0.tgz` from the [GitHub Releases](https://github.com/The-latest-one/dsh-branch-workspace-folders/releases) page:
 
 ```bash
 # Install pre-built asset without compile authorization
