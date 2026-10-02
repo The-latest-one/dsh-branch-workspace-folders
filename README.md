@@ -13,6 +13,16 @@
 
 ---
 
+## 📸 Visual Preview
+
+<p align="center">
+  <img src="docs/images/preview-overview.png" alt="Sidebar Branch Tree Overview" width="48%" />
+  &nbsp;
+  <img src="docs/images/preview-detail.png" alt="Branch Hierarchy & Guide Rails" width="48%" />
+</p>
+
+---
+
 ## 🌟 Key Features & Problems Solved
 
 ### 1. Universal Fork Tree & Visual Hierarchy

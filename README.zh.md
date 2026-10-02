@@ -13,6 +13,16 @@
 
 ---
 
+## 📸 界面效果预览
+
+<p align="center">
+  <img src="docs/images/preview-overview.png" alt="侧边栏工作区分支树总览" width="48%" />
+  &nbsp;
+  <img src="docs/images/preview-detail.png" alt="分支层级与视觉导轨细节" width="48%" />
+</p>
+
+---
+
 ## 🌟 核心特性与解决的痛点
 
 ### 1. 树状层级呈现与视觉重构 (Universal Fork Tree & Visual Hierarchy)
