@@ -122,11 +122,16 @@
     "url": "https://github.com/The-latest-one/dsh-branch-workspace-folders.git"
   },
   "keywords": [
+    "deepseek-harness",
     "dsh",
     "dsh-plugin",
     "branch",
+    "fork-tree",
     "workspace",
-    "sidebar"
+    "sidebar",
+    "cascade-purge",
+    "tree-view",
+    "cordis"
   ],
   "engines": {
     "node": ">=20"
