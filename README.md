@@ -20,6 +20,23 @@
   &nbsp;
   <img src="docs/images/preview-detail.png" alt="Branch Hierarchy & Guide Rails" width="48%" />
 </p>
+<p align="center">
+  <em>Left: Sidebar tree grouping, placeFork clustering & L-shaped vector rails &nbsp;|&nbsp; Right: Multi-tier indentation, solid triangle toggles & status bubbling</em>
+</p>
+
+---
+
+## ⚡ Quick Comparison: Native DSH vs. This Plugin
+
+| Capability / Pain Point | Official Native DSH | Other Community Plugins | **dsh-branch-workspace-folders** |
+|---|:---:|:---:|:---:|
+| **Forked Session Hierarchy** | ❌ Flat list only, scattered by recency | ⚠️ Pop out standalone SVG panel | **✅ Native in-place collapsible tree with L-shaped guide rails** |
+| **New Fork Positioning** | ⚠️ Appended at arbitrary list ends | ❌ Unchanged | **✅ `placeFork` auto-clusters adjacent above parent session** |
+| **Folded Status Bubbling** | ❌ None (blindspot for running tasks) | ❌ None | **✅ 4-state priority FSM (approval warnings bubble to root)** |
+| **Physical Disk Deletion** | ❌ Soft archive only (`.zstd` logs persist) | ⚠️ Standalone trash button / no cascade | **✅ True cascading physical purge with rollback safety** |
+| **Indentation Reliability** | ❌ Negative indentation in directory trees | ❌ Overrides directory spacing | **✅ Two-track decoupled variables (`--dsh-branch` & `--dsh-ws`)** |
+| **Engine Recursion Safety** | ❌ N/A | ⚠️ Direct recursion (risk of stack overflow) | **✅ Heap-allocated explicit stacks (tested against 20,000 depth)** |
+| **DSH v0.2.0-rc.2 Alignment** | ⚠️ Shipped in native | ❌ Legacy 0.1.x baselines | **✅ 100% aligned (two-tier slots, 0.03px/ms marquee, FLIP keys)** |
 
 ---
 
