@@ -19,7 +19,8 @@
     "CHANGELOG.md",
     "LICENSE",
     "scripts/install-readonly.sh",
-    "scripts/build.sh"
+    "scripts/build.sh",
+    "screenshots.json"
   ],
   "scripts": {
     "build": "npm run build:types && npm run build:bundle",
