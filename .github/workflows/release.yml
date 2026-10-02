@@ -1,0 +1,45 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Setup Node.js 22.x
+      uses: actions/setup-node@v4
+      with:
+        node-version: 22.x
+
+    - name: Install dependencies
+      run: npm install
+
+    - name: Typecheck
+      run: npm run typecheck
+
+    - name: Build
+      run: npm run build
+
+    - name: Run test suite
+      run: npm test
+
+    - name: Pack tarball asset
+      run: |
+        npm pack --cache /tmp/dsh-npm-cache
+        echo "TARBALL=$(ls dsh-branch-workspace-folders-*.tgz)" >> $GITHUB_ENV
+
+    - name: Create GitHub Release
+      uses: softprops/action-gh-release@v2
+      with:
+        name: Release ${{ github.ref_name }}
+        files: ${{ env.TARBALL }}
+        generate_release_notes: true

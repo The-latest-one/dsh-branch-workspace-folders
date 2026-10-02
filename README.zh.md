@@ -4,6 +4,8 @@
 
 [![Version](https://img.shields.io/badge/version-v0.2.0-blue.svg)](package.json)
 [![DSH Compatibility](https://img.shields.io/badge/DSH-v0.2.0--rc.2-success.svg)](package.json)
+[![CI](https://github.com/JIaDE-YX/dsh-branch-workspace-folders/actions/workflows/ci.yml/badge.svg)](https://github.com/JIaDE-YX/dsh-branch-workspace-folders/actions)
+[![GitHub Release](https://img.shields.io/github/v/release/JIaDE-YX/dsh-branch-workspace-folders)](https://github.com/JIaDE-YX/dsh-branch-workspace-folders/releases)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![Tests](https://img.shields.io/badge/tests-45%2F45%20passing-brightgreen.svg)](tests/)
 
@@ -82,7 +84,26 @@
 
 ## 📦 安装与集成
 
-### 方式一：本地 Profile 热装配转正（推荐，免重启，左上角插件列表立即可见）
+### 方式一：DSH 插件 CLI 安装（推荐，在线分发）
+
+```bash
+# 从 GitHub 直接安装
+dsh plugin --profile web add github:JIaDE-YX/dsh-branch-workspace-folders
+
+# 或锁定已发布的稳定版本 tag
+dsh plugin --profile web add github:JIaDE-YX/dsh-branch-workspace-folders#v0.2.0
+```
+
+### 方式二：下载预编译 Tarball 离线免授权安装（企业与内网首选）
+
+从 [GitHub Releases](https://github.com/JIaDE-YX/dsh-branch-workspace-folders/releases) 页面下载 `dsh-branch-workspace-folders-0.2.0.tgz` 预构建包：
+
+```bash
+# 免编译执行权限，纯离线极速安装
+dsh plugin --profile web add ./dsh-branch-workspace-folders-0.2.0.tgz
+```
+
+### 方式三：本地 Profile 热装配转正（免重启，左上角插件列表立即可见）
 
 如果当前 DSH 环境装有 `dsh-super-injector`（开发基建），且希望插件正式出现在左上角侧边栏的“已安装”插件卡片中：
 
@@ -91,7 +112,7 @@
 dev_install_package {"dir": "/path/to/dsh-branch-workspace-folders"}
 ```
 
-### 方式二：一键自动安装到本地 DSH Profile（生产态部署）
+### 方式四：一键自动编译安装到本地 DSH Profile（生产态部署）
 
 ```bash
 npm run install:dsh
@@ -99,7 +120,7 @@ npm run install:dsh
 
 脚本将自动执行：双端类型检查 -> 编译构建 -> npm 打包 -> 部署至 `${DSH_HOME:-$HOME/.dsh}/profiles/web` -> 自愈 node_modules junction 并重启 Web 服务。
 
-### 方式三：超级模组运行时热注入（开发调试态，零配置污染）
+### 方式五：超级模组运行时热注入（开发调试态，零配置污染）
 
 ```bash
 # 1. 运行时直接注入内存（不修改 patch、不修改 package.json、不重启）：
@@ -109,7 +130,7 @@ dev_inject_plugin {"dir": "/path/to/dsh-branch-workspace-folders"}
 dev_reload_package {"packageName": "dsh-branch-workspace-folders"}
 ```
 
-### 方式四：手动配置
+### 方式六：手动配置
 
 在 DSH profile 的 `package.json` 中配置：
 
