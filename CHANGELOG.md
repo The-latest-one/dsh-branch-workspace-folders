@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.1] - 2026-10-03
+
+### Fixed
+- **Transparent Ancestor Stitching for Multi-Tier Fork Trees**:
+  - Implemented `resolveSurvivingParent` with cycle-safe and dirty-type defense: when intermediate parent sessions are archived (hidden in `default` filter), active child branches transparently stitch to the nearest surviving visible ancestor rather than incorrectly breaking out into top-level orphan roots.
+  - Upgraded `buildSessionTree` and `collectBranchIds` to accept `lookupParent` option across complete catalog with `bypassedParents` tagging.
+  - Fixed `reconcileManualOrder` `placeFork` clustering bug under production member lists containing archived sessions by introducing `activeResultSet` anchor verification, clustering active branches directly above surviving ancestors instead of dropping to the archive zone boundary.
+  - Wired full workspace viewing pipelines in `FlatList`, `GroupedView` (workspace & workspace-tree modes), and `revealTargetSession`.
+  - Added full test suite and 20,000-depth stress testing in `tests/ancestor_stitching.test.mjs` (51/51 tests PASS).
+
 ## [0.2.0] - 2026-09-30
 
 ### Added

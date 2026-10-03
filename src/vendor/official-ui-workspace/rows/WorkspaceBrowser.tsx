@@ -308,7 +308,11 @@ function FlatList({
     [list, sessionIds, rowState, statuses],
   )
 
-  const sessionTree = useMemo(() => buildSessionTree(rawRows), [rawRows])
+  const lookupParent = useCallback((id: string) => (list.byId as any)[id]?.parentId, [list.byId])
+  const sessionTree = useMemo(
+    () => buildSessionTree(rawRows, { lookupParent }),
+    [rawRows, lookupParent],
+  )
   const flatRows = useMemo(
     () => flattenSessionTree(sessionTree, 0, [], new Set(), collapsedBranches),
     [sessionTree, collapsedBranches],
@@ -611,7 +615,9 @@ function SessionTree({
     const compatibleDrag =
       workspaceDrag !== null && parents.get(workspaceDrag.workspaceId) === parents.get(group.key)
 
-    const sessionTree = buildSessionTree(group.sessions)
+    const sessionTree = buildSessionTree(group.sessions, {
+      lookupParent: (id: string) => (list.byId as any)[id]?.parentId,
+    })
     const collapsedBranchSet = new Set(collapsedBranchesByAccount[group.key] || [])
     const flattenedRows = flattenSessionTree(sessionTree, 0, [], new Set(), collapsedBranchSet)
     const pathByNode = buildPathMap(sessionTree)
@@ -1023,7 +1029,9 @@ export function WorkspaceBrowser({
 
   const handleCollapseAllBranches = () => {
     const allSessions = list.ids.map((id: any) => list.byId[id]).filter(Boolean)
-    const allBranchIds = collectBranchIds(allSessions as any)
+    const allBranchIds = collectBranchIds(allSessions as any, {
+      lookupParent: (id: string) => (list.byId as any)[id]?.parentId,
+    })
     const allKeys = ['', FLAT_SESSION_ORDER_KEY, ...workspaces.map((w: any) => w.workspaceId)]
     if (typeof actions?.setAllBranchesCollapsed === 'function') {
       try {
@@ -1227,7 +1235,9 @@ export function WorkspaceBrowser({
         groupSessions = list.ids.map((id: any) => list.byId[id]).filter(Boolean)
       }
 
-      const tree = buildSessionTree(groupSessions as any)
+      const tree = buildSessionTree(groupSessions as any, {
+        lookupParent: (id: string) => (list.byId as any)[id]?.parentId,
+      })
       const ancestors = findSessionAncestors(tree, sessionId)
       if (ancestors && ancestors.length > 0) {
         for (const ancestorId of ancestors) {

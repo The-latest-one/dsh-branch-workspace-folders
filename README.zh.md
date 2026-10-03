@@ -2,12 +2,12 @@
 
 🌐 [English](README.md) | **中文**
 
-[![Version](https://img.shields.io/badge/version-v0.2.0-blue.svg)](package.json)
+[![Version](https://img.shields.io/badge/version-v0.2.1-blue.svg)](package.json)
 [![DSH Compatibility](https://img.shields.io/badge/DSH-v0.2.0--rc.2-success.svg)](package.json)
 [![CI](https://github.com/The-latest-one/dsh-branch-workspace-folders/actions/workflows/ci.yml/badge.svg)](https://github.com/The-latest-one/dsh-branch-workspace-folders/actions)
 [![GitHub Release](https://img.shields.io/github/v/release/The-latest-one/dsh-branch-workspace-folders)](https://github.com/The-latest-one/dsh-branch-workspace-folders/releases)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
-[![Tests](https://img.shields.io/badge/tests-45%2F45%20passing-brightgreen.svg)](tests/)
+[![Tests](https://img.shields.io/badge/tests-51%2F51%20passing-brightgreen.svg)](tests/)
 
 > DeepSeek Harness (DSH) 官方生态全功能增强插件：严格基于官方原生 UI/UX 设计契约，深度重构侧边栏工作区与会话树。提供**全量非递归防爆栈会话树**、**`placeFork` 智能分叉排序聚类**、**原生 L 型树导轨与字阶分层**、**折叠场景状态通道冒泡**、**已归档三态过滤**以及**会话级联物理永久删除（Purge）安全事务引擎**。
 
@@ -118,16 +118,16 @@
 dsh plugin --profile web add github:The-latest-one/dsh-branch-workspace-folders
 
 # 或锁定已发布的稳定版本 tag
-dsh plugin --profile web add github:The-latest-one/dsh-branch-workspace-folders#v0.2.0
+dsh plugin --profile web add github:The-latest-one/dsh-branch-workspace-folders#v0.2.1
 ```
 
 ### 方式二：下载预编译 Tarball 离线免授权安装（企业与内网首选）
 
-从 [GitHub Releases](https://github.com/The-latest-one/dsh-branch-workspace-folders/releases) 页面下载 `dsh-branch-workspace-folders-0.2.0.tgz` 预构建包：
+从 [GitHub Releases](https://github.com/The-latest-one/dsh-branch-workspace-folders/releases) 页面下载 `dsh-branch-workspace-folders-0.2.1.tgz` 预构建包：
 
 ```bash
 # 免编译执行权限，纯离线极速安装
-dsh plugin --profile web add ./dsh-branch-workspace-folders-0.2.0.tgz
+dsh plugin --profile web add ./dsh-branch-workspace-folders-0.2.1.tgz
 ```
 
 ### 方式三：本地 Profile 热装配转正（免重启，左上角插件列表立即可见）
@@ -207,7 +207,7 @@ npm run typecheck
 # 2. 编译 Host 声明文件 + tsdown 打包客户端 client.js + 自动内联 CSS
 npm run build
 
-# 3. 运行自动化测试套件（必须全部 45/45 PASS）
+# 3. 运行自动化测试套件（必须全部 51/51 PASS）
 npm test
 
 # 4. 如当前处于 DSH 运行时，触发插件热重载生效

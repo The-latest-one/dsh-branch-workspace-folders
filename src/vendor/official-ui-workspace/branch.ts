@@ -13,32 +13,87 @@ export interface BranchNode {
   children?: BranchNode[]
   orphan?: boolean
   cycle?: boolean
+  bypassedParents?: boolean
   [k: string]: any
+}
+
+export interface BuildTreeOptions {
+  /**
+   * Optional parent lookup across the complete (unfiltered/archived) session catalog.
+   * Enables transparent ancestor stitching when an intermediate parent is archived/hidden.
+   */
+  lookupParent?: (id: string) => string | undefined
+}
+
+/**
+ * Walk up the parent chain non-recursively to find the nearest surviving visible ancestor.
+ * Cycle-safe and stack-safe (uses a visited Set and heap loop).
+ */
+export function resolveSurvivingParent<T extends BranchNode>(
+  startParentId: string | undefined,
+  visibleById: Map<string, T>,
+  lookupParent?: (id: string) => string | undefined,
+): T | undefined {
+  if (!startParentId || typeof startParentId !== 'string') return undefined
+
+  const direct = visibleById.get(startParentId)
+  if (direct !== undefined) return direct
+
+  if (!lookupParent) return undefined
+
+  const visited = new Set<string>([startParentId])
+  let currentParentId: string | undefined = lookupParent(startParentId)
+
+  while (currentParentId !== undefined && currentParentId !== '' && currentParentId !== null) {
+    if (typeof currentParentId !== 'string') break
+    if (visited.has(currentParentId)) break
+    visited.add(currentParentId)
+
+    const candidate = visibleById.get(currentParentId)
+    if (candidate !== undefined) {
+      return candidate
+    }
+
+    currentParentId = lookupParent(currentParentId)
+  }
+
+  return undefined
 }
 
 /**
  * Build a parentId -> children tree from a workspace's flat session nodes.
- * Nodes whose parent is absent from the group become roots. The input nodes
- * are reused; children arrays are reset on each build so repeated renders do
- * not accumulate duplicates.
+ * Nodes whose parent is absent from the group stitch to the nearest surviving
+ * ancestor when `options.lookupParent` is provided, or become roots otherwise.
+ * The input nodes are reused; children arrays are reset on each build so
+ * repeated renders do not accumulate duplicates.
  */
-export function buildSessionTree<T extends BranchNode>(sessions: readonly T[]): T[] {
+export function buildSessionTree<T extends BranchNode>(
+  sessions: readonly T[],
+  options?: BuildTreeOptions,
+): T[] {
   const nodes = sessions.map((node) => {
     const copy: any = { ...node, children: [] as BranchNode[] }
     delete copy.orphan
     delete copy.cycle
+    delete copy.bypassedParents
     return copy as T
   })
   const byId = new Map(nodes.map((node) => [node.id, node]))
   const roots: T[] = []
   for (const node of nodes) {
-    const parentId = (node as any).parentId
-    const parent = parentId !== undefined && parentId !== node.id ? byId.get(parentId) : undefined
+    const rawParentId = (node as any).parentId
+    const parent =
+      rawParentId !== undefined && rawParentId !== node.id
+        ? resolveSurvivingParent(rawParentId, byId, options?.lookupParent)
+        : undefined
     if (parent === undefined) {
-      if (parentId !== undefined && parentId !== node.id) (node as any).orphan = true
+      if (rawParentId !== undefined && rawParentId !== node.id) (node as any).orphan = true
       roots.push(node)
     } else {
       ;(parent as any).children.push(node)
+      if (parent.id !== rawParentId) {
+        ;(node as any).bypassedParents = true
+      }
     }
   }
   const reachable = new Set<string>()
@@ -227,7 +282,10 @@ export function buildSiblingsMap<T extends BranchNode>(roots: readonly T[]): Map
 }
 
 /** Collect ids of nodes that have at least one child (branch nodes). Cycle-safe & stack-safe. */
-export function collectBranchIds<T extends BranchNode>(sessions: readonly T[]): string[] {
+export function collectBranchIds<T extends BranchNode>(
+  sessions: readonly T[],
+  options?: BuildTreeOptions,
+): string[] {
   const byId = new Map<string, BranchNode>()
   for (const session of sessions) {
     if (session === undefined) continue
@@ -235,7 +293,11 @@ export function collectBranchIds<T extends BranchNode>(sessions: readonly T[]): 
   }
   const roots: BranchNode[] = []
   for (const node of byId.values()) {
-    const parent = node.parentId !== undefined && node.parentId !== node.id ? byId.get(node.parentId) : undefined
+    const rawParentId = node.parentId
+    const parent =
+      rawParentId !== undefined && rawParentId !== node.id
+        ? resolveSurvivingParent(rawParentId, byId, options?.lookupParent)
+        : undefined
     if (parent === undefined) roots.push(node)
     else (parent.children as BranchNode[]).push(node)
   }

@@ -7,6 +7,7 @@ export {
   buildSessionTree,
   flattenSessionTree,
   findSessionAncestors,
+  resolveSurvivingParent,
   countDescendants,
   buildPathMap,
   buildSiblingsMap,

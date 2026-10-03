@@ -142,6 +142,23 @@ export function orderByRecency(
     )
 }
 
+function findSurvivingAncestorInResult(
+  startId: SessionId,
+  activeResultSet: ReadonlySet<SessionId>,
+  summaries: SessionListState['byId'],
+  archived?: ReadonlySet<SessionId>,
+): SessionId | undefined {
+  const visited = new Set<SessionId>([startId])
+  let curr: SessionId | undefined = summaries[startId]?.parentId as SessionId | undefined
+  while (curr !== undefined && curr !== '' && curr !== null) {
+    if (visited.has(curr)) break
+    visited.add(curr)
+    if (activeResultSet.has(curr) && (!archived || !archived.has(curr))) return curr
+    curr = summaries[curr]?.parentId as SessionId | undefined
+  }
+  return undefined
+}
+
 /**
  * Reconcile a browser-local manual order with current account membership.
  */
@@ -180,6 +197,7 @@ export function reconcileManualOrder(
     ...ordinary,
     ...archives,
   ]
+  const activeResultSet = new Set(result.filter((id) => !archived.has(id)))
   const pending = new Set(ordinary)
   for (const id of [...ordinary].reverse()) {
     if (!pending.has(id)) continue
@@ -189,8 +207,11 @@ export function reconcileManualOrder(
     while (curr !== undefined && pending.has(curr) && !seen.has(curr)) {
       seen.add(curr)
       chain.push(curr)
-      const parentId = summaries[curr]?.parentId as SessionId | undefined
-      if (parentId === undefined || parentId === curr || !result.includes(parentId)) {
+      let parentId = summaries[curr]?.parentId as SessionId | undefined
+      if (parentId !== undefined && parentId !== curr && (!activeResultSet.has(parentId) || archived.has(parentId))) {
+        parentId = findSurvivingAncestorInResult(curr, activeResultSet, summaries, archived)
+      }
+      if (parentId === undefined || parentId === curr || !activeResultSet.has(parentId) || archived.has(parentId)) {
         break
       }
       curr = parentId
@@ -198,8 +219,11 @@ export function reconcileManualOrder(
     for (let i = chain.length - 1; i >= 0; i--) {
       const nodeId = chain[i]
       if (!pending.delete(nodeId)) continue
-      const parentId = summaries[nodeId]?.parentId as SessionId | undefined
-      if (parentId === undefined || parentId === nodeId) continue
+      let parentId = summaries[nodeId]?.parentId as SessionId | undefined
+      if (parentId !== undefined && parentId !== nodeId && (!activeResultSet.has(parentId) || archived.has(parentId))) {
+        parentId = findSurvivingAncestorInResult(nodeId, activeResultSet, summaries, archived)
+      }
+      if (parentId === undefined || parentId === nodeId || archived.has(parentId)) continue
       const pIdx = result.indexOf(parentId)
       if (pIdx === -1) continue
       const curIdx = result.indexOf(nodeId)
