@@ -1,0 +1,7 @@
+.exits {
+  contain: strict;
+  pointer-events: none;
+  position: absolute;
+  inset: 0;
+  overflow: clip;
+}

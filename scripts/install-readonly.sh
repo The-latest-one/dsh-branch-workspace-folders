@@ -10,8 +10,18 @@
 set -euo pipefail
 
 REPO="${1:-$PWD}"
-PROFILE="${2:-${DSH_PROFILE:-${DSH_HOME:-$HOME/.dsh}/profiles/web}}"
 DSH_HOME="${DSH_HOME:-$HOME/.dsh}"
+if [ -n "${2:-}" ]; then
+  PROFILE="$2"
+elif [ -n "${DSH_PROFILE:-}" ]; then
+  if [[ "$DSH_PROFILE" = /* ]]; then
+    PROFILE="$DSH_PROFILE"
+  else
+    PROFILE="${DSH_HOME}/profiles/$DSH_PROFILE"
+  fi
+else
+  PROFILE="${DSH_HOME}/profiles/web"
+fi
 DSH_START_DIR="${DSH_START_DIR:-$HOME}"
 NPM_CACHE_DIR="${NPM_CACHE_DIR:-/tmp/dsh-npm-cache}"
 PNPM_STORE_DIR="${PNPM_STORE_DIR:-}"

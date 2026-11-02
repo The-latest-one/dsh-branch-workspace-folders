@@ -20,6 +20,7 @@ import {
   IconFolderOpenRegular,
   IconPersonalizationOutlineRegular,
   IconProjectAddOutlineRegular,
+  IconQueueOutlineRegular,
   IconSearchOutlineRegular,
   IconWorkspaceTreeOutlineRegular,
   Menu,
@@ -60,16 +61,104 @@ import {
 import { uiLabel } from '../ui-label.ts'
 import { FLAT_SESSION_ORDER_KEY, type SessionGroupBy } from '../stores.ts'
 import { WorkspacePickFlow } from '../WorkspacePicker.tsx'
+import { AnimatedRows } from './AnimatedRows.tsx'
 import css from './WorkspaceBrowser.module.css'
 
 const EXPAND_SLIDE_MS = 300
 const SEARCH_DEBOUNCE_MS = 250
 const SEARCH_QUERY_MAX_CODE_UNITS = 500
-const COLLAPSED_SESSION_LIMIT = 5
+const SESSION_WATERMARK_BASE = 5
+const SESSION_WATERMARK_AUTO_MAX = 50
+
+function workspaceDisplayTitle(title: string, localizedDefault: string) {
+  return title === 'default-workspace' ? localizedDefault : title
+}
+
+function watermarkRows(
+  sessions: readonly SessionNode[],
+  watermark: number,
+): { rows: readonly SessionNode[]; hiddenCount: number } {
+  let count = 0
+  const rows = sessions.filter((session) => {
+    if (session.blank) return true
+    count += 1
+    return count <= watermark
+  })
+  return { rows, hiddenCount: Math.max(0, sessions.length - rows.length) }
+}
+
+function requiredWatermark(
+  sessions: readonly SessionNode[],
+  current: string | undefined,
+  revealSessionId: string | undefined,
+): number {
+  let required = SESSION_WATERMARK_BASE
+  let index = 0
+  for (const session of sessions) {
+    if (session.blank) continue
+    index += 1
+    if (
+      (index <= SESSION_WATERMARK_AUTO_MAX &&
+        (session.running ||
+          session.runningSubagentCount > 0 ||
+          session.pendingInteraction !== undefined ||
+          session.completed ||
+          session.id === current)) ||
+      session.id === revealSessionId
+    ) {
+      required = index
+    }
+  }
+  return required
+}
+
+function raiseWatermarks(
+  marks: Record<string, number>,
+  required: Map<string, number>,
+): Record<string, number> {
+  let raised = marks
+  for (const [key, watermark] of required) {
+    if (watermark > (raised[key] ?? SESSION_WATERMARK_BASE)) {
+      raised = { ...raised, [key]: watermark }
+    }
+  }
+  return raised
+}
+
+function EmptySessions({
+  rowState,
+  onLeaveArchivedOnly,
+  t,
+}: {
+  rowState: Pick<SessionRowState, 'archivedFilter'>
+  onLeaveArchivedOnly?: () => void
+  t: WorkspaceBrowserProps['t']
+}) {
+  const archivedOnly = rowState.archivedFilter === 'only'
+  return (
+    <div className={css.emptyState} data-row-key="empty">
+      {archivedOnly ? (
+        <IconArchiveOutlineRegular size={24} />
+      ) : (
+        <IconQueueOutlineRegular size={24} />
+      )}
+      <div>{archivedOnly ? t('empty.noneArchived') : t('empty.none')}</div>
+      {archivedOnly && onLeaveArchivedOnly && (
+        <button
+          type="button"
+          className={css.emptyAction}
+          onClick={onLeaveArchivedOnly}
+        >
+          {t('empty.viewOthers')}
+        </button>
+      )}
+    </div>
+  )
+}
 
 function collapsedSessionRows(
   sessions: readonly SessionNode[],
-  limit = COLLAPSED_SESSION_LIMIT,
+  limit = SESSION_WATERMARK_BASE,
 ): {
   rows: readonly SessionNode[]
   hiddenCount: number
@@ -268,6 +357,8 @@ function FlatList({
   list,
   sessionIds,
   rowState,
+  onLeaveArchivedOnly,
+  animationResetKey,
   useSessionStatus,
   open,
   onSessionRenameRequest,
@@ -284,6 +375,8 @@ function FlatList({
   list: SessionListState
   sessionIds: readonly SessionId[]
   rowState: SessionRowState
+  onLeaveArchivedOnly?: () => void
+  animationResetKey?: string
   useSessionStatus?: any
   open: (sessionId: SessionId) => void
   onSessionRenameRequest: (id: SessionId, currentTitle: string) => void
@@ -345,10 +438,23 @@ function FlatList({
   }
 
   const now = Date.now()
+  const rowKeys = flatRows.length === 0 ? ['empty'] : flatRows.map((r) => `session:${r.node.id}`)
   return (
     <div className={clsx(css.treeBody, css.wide)}>
-      <div className={clsx(css.list, css.flatList)} role="tree" aria-label={t('section.sessions')}>
-        {flatRows.length === 0 && <div className={css.empty}>{t('empty.none')}</div>}
+      <AnimatedRows
+        className={clsx(css.list, css.flatList)}
+        label={t('section.sessions')}
+        rowKeys={rowKeys}
+        ready={list.phase === 'ready' && workspaceReady && drag === null}
+        resetKey={animationResetKey ?? ''}
+      >
+        {flatRows.length === 0 && (
+          <EmptySessions
+            rowState={rowState}
+            onLeaveArchivedOnly={onLeaveArchivedOnly}
+            t={t}
+          />
+        )}
         {flatRows.map(({ node, depth }) => {
           const active = drag !== null && drag.pinned === node.pinned
           const normalizeHalf = (half: 'before' | 'after') => (node.blank ? 'after' : half)
@@ -410,7 +516,7 @@ function FlatList({
             />
           )
         })}
-      </div>
+      </AnimatedRows>
     </div>
   )
 }
@@ -426,7 +532,9 @@ function SessionTree({
   workspaces,
   ungroupedSessionIds,
   rowState,
+  onLeaveArchivedOnly,
   workspaceReady,
+  animationResetKey,
   usePanelInfo,
   onRenameRequest,
   onDeleteRequest,
@@ -452,7 +560,9 @@ function SessionTree({
   workspaces: readonly WorkspaceView[]
   ungroupedSessionIds: readonly SessionId[]
   rowState: SessionRowState
+  onLeaveArchivedOnly?: () => void
   workspaceReady: boolean
+  animationResetKey?: string
   usePanelInfo?: any
   onRenameRequest: (workspaceId: WorkspaceId, currentTitle: string) => void
   onDeleteRequest: (workspaceId: WorkspaceId, title: string) => void
@@ -478,7 +588,8 @@ function SessionTree({
     : (Object.values(list.byId).find((session: any) => (session.retainedBy?.mainView ?? 0) > 0)?.id as SessionId | undefined)
   const revealGroup =
     revealSessionId === undefined || !workspaceReady ? undefined : owningGroupKey(workspaces, revealSessionId as SessionId)
-  const [sessionLimits, setSessionLimits] = useState<Record<string, number>>({})
+  const [storedWatermarks, setStoredWatermarks] = useState<Record<string, number>>({})
+  const [watermarkMotionKey, setWatermarkMotionKey] = useState(0)
   const [drag, setDrag] = useState<{
     accountKey: string
     sessionId: string
@@ -545,14 +656,67 @@ function SessionTree({
     }
   }, [groupExpansion, parents, revealGroup, setGroupExpanded])
 
+  const baselines = useMemo(
+    () =>
+      new Map(
+        groups.map((group) => [
+          group.key,
+          Math.max(
+            SESSION_WATERMARK_BASE,
+            requiredWatermark(
+              group.sessions,
+              current,
+              group.key === revealGroup ? revealSessionId : undefined,
+            ),
+          ),
+        ]),
+      ),
+    [groups, current, revealGroup, revealSessionId],
+  )
+
+  const foldedKeys = useMemo(
+    () => new Set(groups.filter((group) => !group.expanded).map((group) => group.key)),
+    [groups],
+  )
+  const underFoldedAncestor = useCallback(
+    (key: string) => {
+      for (let owner = parents.get(key); owner !== undefined; owner = parents.get(owner)) {
+        if (foldedKeys.has(owner)) return true
+      }
+      return false
+    },
+    [parents, foldedKeys],
+  )
+
+  const requiredWatermarks = useMemo(() => {
+    return new Map([...baselines].filter(([key]) => !underFoldedAncestor(key)))
+  }, [baselines, underFoldedAncestor])
+
+  const sessionWatermarks = useMemo(() => {
+    return raiseWatermarks(storedWatermarks, requiredWatermarks)
+  }, [storedWatermarks, requiredWatermarks])
+
   useEffect(() => {
-    if (revealSessionId === undefined || revealGroup === undefined) return
-    const group = groups.find((candidate) => candidate.key === revealGroup)
-    if (group === undefined || !group.expanded || !group.sessions.some((row) => row.id === revealSessionId)) return
-    setSessionLimits((limits) =>
-      limits[revealGroup] === Infinity ? limits : { ...limits, [revealGroup]: Infinity },
-    )
-  }, [groups, revealGroup, revealSessionId])
+    setStoredWatermarks((marks) => raiseWatermarks(marks, requiredWatermarks))
+  }, [requiredWatermarks])
+
+  const dropWatermarks = useCallback((drop: (key: string) => boolean) => {
+    setStoredWatermarks((marks) => {
+      if (!Object.keys(marks).some(drop)) return marks
+      return Object.fromEntries(Object.entries(marks).filter(([key]) => !drop(key)))
+    })
+    setWatermarkMotionKey((k) => k + 1)
+  }, [])
+
+  const withinGroup = useCallback(
+    (key: string, root: string) => {
+      for (let owner: string | undefined = key; owner !== undefined; owner = parents.get(owner)) {
+        if (owner === root) return true
+      }
+      return false
+    },
+    [parents],
+  )
 
   const now = Date.now()
 
@@ -570,7 +734,14 @@ function SessionTree({
         ? ungroupedSessionIds.map(String)
         : workspaces.find((w) => w.workspaceId === activeDrag.accountKey)?.sessionIds.map(String)
     if (accountSessionIds === undefined) return
-    const renderedSessions = collapsedSessionRows(group.sessions, sessionLimits[group.key]).rows
+    const sessionTree = buildSessionTree(group.sessions, {
+      lookupParent: (id: string) => (list.byId as any)[id]?.parentId,
+    })
+    const collapsedBranchSet = new Set(collapsedBranchesByAccount[group.key] || [])
+    const flattenedRows = flattenSessionTree(sessionTree, 0, [], new Set(), collapsedBranchSet)
+    const watermark = sessionWatermarks[group.key] ?? SESSION_WATERMARK_BASE
+    const visibleFlattened = flattenedRows.filter((row, idx) => row.node.blank || idx < watermark)
+    const renderedSessions = visibleFlattened.map((r) => r.node)
     const nextOrder = sessionDragOrder(accountSessionIds, renderedSessions, activeDrag, over)
     if (nextOrder !== undefined) setSessionOrder(activeDrag.accountKey, nextOrder)
   }
@@ -607,8 +778,6 @@ function SessionTree({
     return children
   }, [groups, parents])
 
-  const rootGroups = childrenByParent.get(undefined) ?? []
-
   const renderGroup = (group: GroupNode, depth: number) => {
     const workspaceId = group.workspaceId
     const children = childrenByParent.get(group.key) ?? []
@@ -622,11 +791,23 @@ function SessionTree({
     const flattenedRows = flattenSessionTree(sessionTree, 0, [], new Set(), collapsedBranchSet)
     const pathByNode = buildPathMap(sessionTree)
 
-    const limit = sessionLimits[group.key] ?? COLLAPSED_SESSION_LIMIT
-    const visibleFlattened = flattenedRows.slice(0, limit)
-    const sessionsExpanded = visibleFlattened.length >= flattenedRows.length
+    const watermark = sessionWatermarks[group.key] ?? SESSION_WATERMARK_BASE
+    const baseline = baselines.get(group.key) ?? SESSION_WATERMARK_BASE
+    const collapsedCount = Math.max(0, flattenedRows.length - baseline)
+    const visibleFlattened = flattenedRows.filter((row, idx) => row.node.blank || idx < watermark)
+    const hiddenCount = Math.max(0, flattenedRows.length - visibleFlattened.length)
+    const sessionsExpanded = hiddenCount === 0
 
+    rowKeys.push(`workspace:${group.key}`)
     const childRows = group.expanded ? children.map((child) => renderGroup(child, depth + 1)) : []
+    if (group.expanded) {
+      for (const r of visibleFlattened) {
+        rowKeys.push(`session:${r.node.id}`)
+      }
+      if (collapsedCount > 0) {
+        rowKeys.push(`overflow:${group.key}`)
+      }
+    }
 
     const workspaceMarker =
       workspaceId !== undefined && workspaceDrag?.over?.id === workspaceId ? workspaceDrag.over.half : null
@@ -710,7 +891,7 @@ function SessionTree({
           t={t}
           onToggle={() => {
             if (group.expanded) {
-              setSessionLimits((limits) => ({ ...limits, [group.key]: COLLAPSED_SESSION_LIMIT }))
+              dropWatermarks((key) => withinGroup(key, group.key))
             }
             setGroupExpanded(group.key, !group.expanded)
           }}
@@ -799,33 +980,63 @@ function SessionTree({
               />
             )
           })}
-        {group.expanded && flattenedRows.length > COLLAPSED_SESSION_LIMIT && (
+        {group.expanded && collapsedCount > 0 && (
           <button
             type="button"
             className={css.sessionOverflowButton}
+            data-row-key={`overflow:${group.key}`}
             aria-expanded={sessionsExpanded}
             onClick={() => {
-              setSessionLimits((limits) => ({
-                ...limits,
-                [group.key]: sessionsExpanded ? COLLAPSED_SESSION_LIMIT : Infinity,
+              if (sessionsExpanded) {
+                dropWatermarks((key) => key === group.key)
+                return
+              }
+              setStoredWatermarks((marks) => ({
+                ...marks,
+                [group.key]:
+                  hiddenCount <= SESSION_WATERMARK_BASE
+                    ? Infinity
+                    : watermark + SESSION_WATERMARK_BASE,
               }))
+              setWatermarkMotionKey((k) => k + 1)
             }}
           >
             {sessionsExpanded
               ? t('sessions.collapse')
-              : t('sessions.expand', { n: Math.max(0, flattenedRows.length - visibleFlattened.length) })}
+              : t('sessions.expand', { n: hiddenCount })}
           </button>
         )}
       </div>
     )
   }
 
+  const rootGroups = childrenByParent.get(undefined) ?? []
+  const workspaceDropAtListStart =
+    rootGroups[0]?.workspaceId !== undefined &&
+    workspaceDrag?.over?.id === rootGroups[0].workspaceId &&
+    workspaceDrag.over.half === 'before'
+
+  const rowKeys = groups.length === 0 ? ['empty'] : []
+  const groupRows = rootGroups.map((group) => renderGroup(group, 0))
+
   return (
     <div className={clsx(css.treeBody, css.wide)}>
-      <div className={css.list} role="tree" aria-label={t('section.workspaces')}>
-        {groups.length === 0 && <div className={css.empty}>{t('empty.none')}</div>}
-        {rootGroups.map((group) => renderGroup(group, 0))}
-      </div>
+      <AnimatedRows
+        className={clsx(css.list, workspaceDropAtListStart && css.listTopDropActive)}
+        label={t('section.sessions')}
+        rowKeys={rowKeys}
+        ready={list.phase === 'ready' && workspaceReady && !nativeDragActive}
+        resetKey={JSON.stringify([animationResetKey, watermarkMotionKey])}
+      >
+        {groups.length === 0 && (
+          <EmptySessions
+            rowState={rowState}
+            onLeaveArchivedOnly={onLeaveArchivedOnly}
+            t={t}
+          />
+        )}
+        {groupRows}
+      </AnimatedRows>
     </div>
   )
 }
@@ -883,7 +1094,7 @@ function SearchResults({
   return (
     <div className={clsx(css.treeBody, css.wide)}>
       <div className={css.searchResults} role="tree" aria-label={uiLabel('搜索结果', 'Search Results')}>
-        {results.items.length === 0 && <div className={css.empty}>{uiLabel('未找到匹配会话', 'No matching sessions')}</div>}
+        {results.items.length === 0 && <div className={css.empty}>{t('search.noMatches')}</div>}
         {results.items.map((result) => (
           <SearchResultItem
             key={result.id}
@@ -895,7 +1106,7 @@ function SearchResults({
           />
         ))}
         {results.hasMore && (
-          <div className={css.searchMoreHint}>{uiLabel('输入更详细的关键词以精确匹配', 'Narrow query for more matches')}</div>
+          <div className={css.searchMoreHint}>{t('search.hasMore', { n: resultLimit })}</div>
         )}
       </div>
     </div>
@@ -939,14 +1150,34 @@ export function WorkspaceBrowser({
 }: WorkspaceBrowserProps) {
   const shortcuts = typeof useShortcuts === 'function' ? useShortcuts((s: any) => s) : undefined
   const newShortcut = Array.isArray(shortcuts) ? shortcuts.find((s: any) => s?.id === 'session.new') : undefined
+  const addShortcut = Array.isArray(shortcuts) ? shortcuts.find((s: any) => s?.id === 'workspace.add') : undefined
+  const searchShortcut = Array.isArray(shortcuts) ? shortcuts.find((s: any) => s?.id === 'session.search') : undefined
   const home = useHostInfo((info: any) => info?.home)
   const list = useSessions((state: any) => state)
-  const workspaces = useWorkspaces((state: any) => state.items)
+  const storedWorkspaces = useWorkspaces((state: any) => state.items)
+  const defaultWorkspaceName = t('workspace.defaultName')
+  const workspaces = useMemo(
+    () =>
+      (storedWorkspaces || []).map((w: any) => ({
+        ...w,
+        title: workspaceDisplayTitle(w.title, defaultWorkspaceName),
+      })),
+    [storedWorkspaces, defaultWorkspaceName],
+  )
   const workspacePhase = useWorkspaces((state: any) => state.phase)
   const workspaceStreamState = useWorkspaces((state: any) => state.state)
   const archivedSessionIds = useWorkspaces((state: any) => (state.archivedSessionIds ?? []).map(String))
   const pinnedSessionIds = useWorkspaces((state: any) => (state.pinnedSessionIds ?? []).map(String))
   const directoryFlowAvailable = useDirectoryFlow((occupied: any) => !!occupied)
+
+  const shortcutState =
+    typeof useWorkspaceShortcuts === 'function'
+      ? useWorkspaceShortcuts((state: any) => state)
+      : undefined
+
+  const leaveArchivedOnly = useCallback(() => {
+    actions.setArchivedFilter('default')
+  }, [actions])
 
   const groupBy = useStore((s: any) => s.groupBy)
   const orderBy = useStore((s: any) => s.orderBy)
@@ -1209,9 +1440,61 @@ export function WorkspaceBrowser({
 
   const searchRoot = useRef<HTMLDivElement>(null)
   const searchInput = useRef<HTMLInputElement>(null)
-  const [wsPickerOpen, setWsPickerOpen] = useState(false)
+  const [localWsPickerOpen, setLocalWsPickerOpen] = useState(false)
+  const wsPickerOpen = (shortcutState?.addRequested ?? false) || localWsPickerOpen
   const wsPlusRef = useRef<HTMLButtonElement>(null)
   const composingRef = useRef(false)
+
+  const [searchOnExpand, setSearchOnExpand] = useState(false)
+
+  useEffect(() => {
+    if (wide && searchOnExpand) {
+      const timer = window.setTimeout(() => {
+        searchInput.current?.focus({ preventScroll: true })
+        setSearchOnExpand(false)
+      }, EXPAND_SLIDE_MS)
+      return () => {
+        window.clearTimeout(timer)
+      }
+    }
+  }, [wide, searchOnExpand])
+
+  useEffect(() => {
+    if (!shortcutState?.searchRequest) return
+    if (typeof closeAddWorkspace === 'function') closeAddWorkspace()
+    setLocalWsPickerOpen(false)
+    setSearchExpanded(true)
+    if (!wide) {
+      setSearchOnExpand(true)
+      expandSidebar()
+    } else {
+      searchInput.current?.focus({ preventScroll: true })
+    }
+  }, [shortcutState?.searchRequest, closeAddWorkspace, expandSidebar, wide])
+
+  useEffect(() => {
+    if (!wide || !searchExpanded || searchOnExpand) return
+    searchInput.current?.focus({ preventScroll: true })
+  }, [wide, searchExpanded, searchOnExpand])
+
+  useEffect(() => {
+    if (!wide || !searchExpanded || searchOnExpand) return
+    const onClick = (event: MouseEvent) => {
+      if (
+        !(event.target instanceof Node) ||
+        searchRoot.current?.contains(event.target) === true
+      ) {
+        return
+      }
+      searchInput.current?.blur()
+      if (normalizedQuery !== '') return
+      setSearchExpanded(false)
+    }
+    document.addEventListener('pointerdown', onClick)
+    return () => {
+      document.removeEventListener('pointerdown', onClick)
+    }
+  }, [wide, searchExpanded, searchOnExpand, normalizedQuery])
 
   const revealTargetSession = useCallback(
     (sessionId: string) => {
@@ -1267,40 +1550,6 @@ export function WorkspaceBrowser({
   useEffect(() => {
     if (normalizedQuery !== '') setRevealSessionId(undefined)
   }, [normalizedQuery])
-
-  const [searchOnExpand, setSearchOnExpand] = useState(false)
-  useEffect(() => {
-    if (wide && searchOnExpand) {
-      const timer = window.setTimeout(() => {
-        searchInput.current?.focus({ preventScroll: true })
-        setSearchOnExpand(false)
-      }, EXPAND_SLIDE_MS)
-      return () => {
-        window.clearTimeout(timer)
-      }
-    }
-  }, [wide, searchOnExpand])
-
-  useEffect(() => {
-    if (!wide || !searchExpanded || searchOnExpand) return
-    searchInput.current?.focus({ preventScroll: true })
-  }, [wide, searchExpanded, searchOnExpand])
-
-  useEffect(() => {
-    if (!wide || !searchExpanded || searchOnExpand) return
-    const onClick = (event: MouseEvent) => {
-      if (!(event.target instanceof Node) || searchRoot.current?.contains(event.target) === true) {
-        return
-      }
-      searchInput.current?.blur()
-      if (normalizedQuery !== '') return
-      setSearchExpanded(false)
-    }
-    document.addEventListener('click', onClick)
-    return () => {
-      document.removeEventListener('click', onClick)
-    }
-  }, [normalizedQuery, wide, searchExpanded, searchOnExpand])
 
   useEffect(() => {
     if (normalizedQuery === '') {
@@ -1445,7 +1694,8 @@ export function WorkspaceBrowser({
                 searchExpanded && css.searchExpanded,
               )}
               onClick={() => {
-                setWsPickerOpen(false)
+                if (typeof closeAddWorkspace === 'function') closeAddWorkspace()
+                setLocalWsPickerOpen(false)
                 setSearchExpanded(true)
                 searchInput.current?.focus()
               }}
@@ -1460,9 +1710,11 @@ export function WorkspaceBrowser({
                   type="button"
                   className={css.searchButton}
                   aria-label={t('search.sessions.aria')}
+                  aria-keyshortcuts={searchShortcut?.aria}
                   aria-expanded={searchExpanded}
                   onClick={() => {
-                    setWsPickerOpen(false)
+                    if (typeof closeAddWorkspace === 'function') closeAddWorkspace()
+                    setLocalWsPickerOpen(false)
                     setSearchExpanded(true)
                   }}
                 >
@@ -1537,8 +1789,13 @@ export function WorkspaceBrowser({
                 type="button"
                 className={css.iconButton}
                 aria-label={t('workspace.add')}
+                aria-keyshortcuts={addShortcut?.aria}
                 onClick={() => {
-                  setWsPickerOpen((v) => !v)
+                  if (typeof requestAddWorkspace === 'function') {
+                    requestAddWorkspace()
+                  } else {
+                    setLocalWsPickerOpen((v) => !v)
+                  }
                 }}
               >
                 <IconProjectAddOutlineRegular size={wide ? 16 : 18} />
@@ -1560,11 +1817,13 @@ export function WorkspaceBrowser({
           addOnly={true}
           side="right"
           onPick={(workspaceId) => {
-            setWsPickerOpen(false)
+            if (typeof closeAddWorkspace === 'function') closeAddWorkspace()
+            setLocalWsPickerOpen(false)
             startSession(workspaceId)
           }}
           onClose={() => {
-            setWsPickerOpen(false)
+            if (typeof closeAddWorkspace === 'function') closeAddWorkspace()
+            setLocalWsPickerOpen(false)
           }}
         />
       </div>
@@ -1609,6 +1868,9 @@ export function WorkspaceBrowser({
               list={list}
               sessionIds={orderedFlatSessionIds}
               rowState={rowState}
+              onLeaveArchivedOnly={leaveArchivedOnly}
+              workspaceReady={workspaceReady}
+              animationResetKey={groupBy}
               useSessionStatus={useSessionStatus}
               open={guardedOpen}
               onSessionRenameRequest={(id, title) =>
@@ -1617,7 +1879,6 @@ export function WorkspaceBrowser({
               renderSlot={renderSlot}
               usePanelInfo={usePanelInfo}
               setSessionOrder={saveSessionOrder}
-              workspaceReady={workspaceReady}
               revealSessionId={revealSessionId}
               onSessionRevealed={acknowledgeSessionReveal}
               collapsedBranches={
@@ -1637,7 +1898,9 @@ export function WorkspaceBrowser({
               workspaces={orderedWorkspaces}
               ungroupedSessionIds={orderedUngroupedSessionIds}
               rowState={rowState}
+              onLeaveArchivedOnly={leaveArchivedOnly}
               workspaceReady={workspaceReady}
+              animationResetKey={groupBy}
               usePanelInfo={usePanelInfo}
               onRenameRequest={(workspaceId, currentTitle) => {
                 setRenameTarget({ workspaceId, currentTitle })

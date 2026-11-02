@@ -103,7 +103,7 @@ type RowTranslate = WorkspaceBrowserProps['t']
 
 /** Row display title: blank rows show the localized New Session label. */
 export function displayTitle(node: SessionNode, t: RowTranslate): string {
-  return node.blank ? t('session.new') : node.title
+  return node.blank ? t('session.new') : node.title || t('session.untitled')
 }
 
 /** Localized compact relative time ("刚刚"/"5分钟" in zh, "now"/"5min" in en). */
@@ -501,8 +501,7 @@ export function SearchResultItem({
             <SessionStatusDots statuses={statuses} />
           )}
         </span>
-        <span className={css.searchResultTitle}>{result.title}</span>
-        {result.hasActiveSchedule && <ActiveScheduleIndicator t={t} search />}
+        <span className={css.searchResultTitle}>{result.title || t('session.untitled')}</span>
         {result.archived && onUnarchive !== undefined && (
           <span className={css.rowActions}>
             <Tooltip
@@ -756,9 +755,6 @@ export function SessionNodeItem({
       >
         {title}
       </span>
-
-      {/* Active schedule indicator */}
-      {row.hasActiveSchedule && <ActiveScheduleIndicator t={t} />}
 
       {/* Branch count badge: non-intrusive, auto-hidden on hover so actions have full width */}
       {branchChildren.length > 0 && (

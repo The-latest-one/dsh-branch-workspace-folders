@@ -301,7 +301,7 @@ function sectionMembers(
 }
 
 function sessionTitle(session: SessionSummary): string {
-  return session.blank ? '' : session.displayTitle
+  return session.blank ? '' : session.title?.trim() ?? ''
 }
 
 function hasActiveSchedule(session: SessionSummary): boolean {
@@ -598,7 +598,7 @@ export function deriveSearchResults(
     const ws = workspaces.find((w) => w.sessionIds.includes(summary.id))
     results.push({
       id: summary.id,
-      title: summary.displayTitle || String(summary.id),
+      title: sessionTitle(summary),
       workspace: ws?.title || '',
       running: status?.running ?? summary.running,
       runningSubagentCount: runningChildCount(list, String(summary.id), statuses),

@@ -5,6 +5,24 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.2] - 2026-11-02
+
+### Added
+- **Official DSH v0.2.1-rc.3 Feature Alignment**:
+  - Full alignment with dynamic conversation-driven titles (`@deepseek-ai/dsh-experimental-session-titles-bundle` / `dsh-session-title-all-prompts-llm`).
+  - Added localized fallback for unnamed sessions (`t('session.untitled')`) in `displayTitle` and `SearchResultItem`.
+  - Implemented official watermark system (`SESSION_WATERMARK_BASE = 5`, `SESSION_WATERMARK_AUTO_MAX = 50`) with auto-raising for attention-bearing sessions, step-by-step expansion, collapse to baseline, and workspace folding reset.
+  - Integrated official `AnimatedRows` FLIP transitions across `SessionTree` and `FlatList` with `resetKey` synchronization.
+  - Implemented official `EmptySessions` component with dual-state glyphs (`IconQueueOutlineRegular` / `IconArchiveOutlineRegular`), dedicated empty archived copy, and quick exit action (`empty.viewOthers`).
+  - Integrated global shortcuts (`useWorkspaceShortcuts`) for search (`Mod+K`) and workspace directory picker trigger.
+  - Localized default workspace title via `workspaceDisplayTitle`.
+  - Added test suite `tests/v021_features.test.mjs` (54/54 tests passing).
+
+### Fixed
+- Fixed session title extraction in `tree.ts` (`sessionTitle` now correctly reads dynamic `session.title` instead of static `session.displayTitle`).
+- Removed duplicate hardcoded schedule clock indicator in `Rows.tsx`, fully delegating to `sidebar.session.row.leading` slot.
+- Fixed `install-readonly.sh` profile path resolution when `DSH_PROFILE` is set to relative profile name.
+
 ## [0.2.1] - 2026-10-03
 
 ### Fixed
