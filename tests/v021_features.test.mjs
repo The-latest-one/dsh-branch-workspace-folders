@@ -5,7 +5,7 @@ import { readFileSync } from 'node:fs'
 test('DSH v0.2.1-rc.3: displayTitle implementation falls back to session.untitled for unnamed sessions', () => {
   const client = readFileSync(new URL('../lib/client.js', import.meta.url), 'utf8')
   // Verify displayTitle contains t("session.untitled") fallback
-  assert.match(client, /node\.blank \? t\(["']session\.new["']\) : node\.title \|\| t\(["']session\.untitled["']\)/)
+  assert.match(client, /node\.blank \? t\(["']session\.new["']\) : node\.title(?:\?\.trim\(\))? \|\| t\(["']session\.untitled["']\)/)
 })
 
 test('DSH v0.2.1-rc.3: client bundle includes AnimatedRows, overflow key and EmptySessions', () => {

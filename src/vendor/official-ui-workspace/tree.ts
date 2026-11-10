@@ -54,6 +54,8 @@ export interface SessionNode {
   /** In the registry-global archive set: shown grayed in place and not openable. */
   archived: boolean
   updatedAt: number
+  /** Session working directory. */
+  cwd?: string
   /** Fork-tree parent (absent for top-level rows). */
   parentId?: SessionId
   /** Fork-tree children; empty for leaf rows (derived by the renderer). */
@@ -363,6 +365,7 @@ function sessionNode(
     archived: archived.has(s.id),
     updatedAt: s.updatedAt,
     parentId: resolveParentSessionId(s),
+    ...(s.cwd === undefined || s.cwd === '' ? {} : { cwd: s.cwd }),
     ...(pendingInteraction === undefined ? {} : { pendingInteraction }),
   }
 }
@@ -634,10 +637,11 @@ export function deriveSearchResults(
       !summary.blank &&
       sessionVisible(summary, current, archived, archivedFilter)
     ) {
-      const titleMatch = summary.displayTitle.toLowerCase().includes(normalized)
+      const titleMatch = (summary.displayTitle || sessionTitle(summary)).toLowerCase().includes(normalized)
       const ws = workspaces.find((w) => w.sessionIds.includes(summary.id))
       const wsMatch = ws?.title?.toLowerCase().includes(normalized)
-      if (titleMatch || wsMatch) {
+      const idMatch = summary.id?.toLowerCase().includes(normalized)
+      if (titleMatch || wsMatch || idMatch) {
         if (include(summary)) {
           return { items: results, hasMore: content.hasMore }
         }

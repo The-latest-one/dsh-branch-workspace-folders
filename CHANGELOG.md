@@ -5,9 +5,25 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.2.2] - 2026-11-02
+## [0.2.2] - 2026-11-10
 
 ### Added
+- **Official DSH v0.2.2-rc.1 Full Alignment**:
+  - **4-Token Layout System & Paint Inset**: Integrated `--dsh-sidebar-inline-padding: 8px`, `--dsh-sidebar-row-padding: 12px`, `--dsh-sidebar-label-gap: 6px`, and `--dsh-sidebar-paint-inset: 3px`. Rows now use `border-inline: 3px solid transparent; background-clip: padding-box;` for recessed hover/selection highlight boundaries without content displacement.
+  - **Unified Two-Track Indentation**: Evolved indentation formula to `calc(var(--dsh-sidebar-row-padding, 12px) - var(--dsh-sidebar-paint-inset, 3px) + var(--dsh-workspace-indent, 0px) + var(--dsh-branch-indent, 0px))` while preserving full tree-rail alignment (`.deepBranch`).
+  - **24px Touch Target Operation Buttons**: Enlarged all `.iconButton` hit targets to 24px with `-4px` margin compensation and `13px` action gaps, fully compliant with mobile/touch ergonomics without expanding 32px session row height.
+  - **Trailing Decoration Slot (`sidebar.session.row.trailing`)**: Declared and rendered inline trailing slot in `.rowResting` container between timestamp and pin marker.
+  - **Native Context Menu & Right-Click Integration**: Integrated `@deepseek-ai/dsh-client-ui-context-menu` (`openSessionMenu`, `openWorkspaceMenu`, `useContextMenu`, `useContextMenuTarget`), allowing users to right-click sessions or workspaces, while keeping legacy inline menu fallback.
+  - **Remote Access Control**: Gated row and workspace actions with `useRemoteAccess`, `useWorkspaceAccess`, and `useSessionAccess` snapshots.
+  - **High-Fidelity Offscreen Drag Preview**: Integrated `useRowDragPreview` generating theme-styled drag mirrors matching exact branch depth and typography.
+  - **Workspace Dialog Decoupling**: Extracted `WorkspaceDialogs` driven by `useWorkspaceActionRequest` for rename and removal modals.
+  - **Session Hover Working Directory (CWD)**: `SessionNode` now captures `cwd`, rendered in `SessionHoverContent` with `~` abbreviation.
+  - **Same-Title Workspace Path Disambiguation**: Implemented `distinguishingPathSuffixes` in `WorkspacePicker.tsx` to display shortest distinctive parent suffixes for duplicate directory names.
+  - **Session ID Substring Search**: `deriveSearchResults` now matches session identifiers directly in local queries.
+  - **Keyboard Accessibility & Window Blur Guard**: Added `tabIndex={0}`, Enter/Space row activation, `focus-within` action surfacing, and `renameArmed` window blur protection.
+  - **Mobile Coarse Pointer & Touch Support**: Added `@media (pointer: coarse) { font-size: 16px; }` to prevent mobile browser viewport zoom, and `@media (hover: none)` touch rules.
+  - **Comprehensive Test Suite**: Added `tests/v022_features.test.mjs` and `tests/v021_stress.test.mjs` (65/65 tests passing).
+
 - **Official DSH v0.2.1-rc.3 Feature Alignment**:
   - Full alignment with dynamic conversation-driven titles (`@deepseek-ai/dsh-experimental-session-titles-bundle` / `dsh-session-title-all-prompts-llm`).
   - Added localized fallback for unnamed sessions (`t('session.untitled')`) in `displayTitle` and `SearchResultItem`.

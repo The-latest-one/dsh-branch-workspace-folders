@@ -3,11 +3,11 @@
 🌐 **English** | [中文](README.zh.md)
 
 [![Version](https://img.shields.io/badge/version-v0.2.2-blue.svg)](package.json)
-[![DSH Compatibility](https://img.shields.io/badge/DSH-v0.2.1--rc.3-success.svg)](package.json)
+[![DSH Compatibility](https://img.shields.io/badge/DSH-v0.2.2--rc.1-success.svg)](package.json)
 [![CI](https://github.com/The-latest-one/dsh-branch-workspace-folders/actions/workflows/ci.yml/badge.svg)](https://github.com/The-latest-one/dsh-branch-workspace-folders/actions)
 [![GitHub Release](https://img.shields.io/github/v/release/The-latest-one/dsh-branch-workspace-folders)](https://github.com/The-latest-one/dsh-branch-workspace-folders/releases)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
-[![Tests](https://img.shields.io/badge/tests-54%2F54%20passing-brightgreen.svg)](tests/)
+[![Tests](https://img.shields.io/badge/tests-65%2F65%20passing-brightgreen.svg)](tests/)
 
 > DeepSeek Harness (DSH) full-featured ecosystem extension: strictly aligned with official UI/UX design contracts to deeply rearchitect the sidebar workspace and session tree. Delivers **heap-allocated non-recursive stack-safe session trees**, **`placeFork` intelligent fork clustering**, **two-track indentation decoupling**, **constant-speed title marquee with fade masking**, **official leading & hover slot compatibility**, **collapsed status bubbling**, **archived tri-state filtering**, and a **physical cascading purge transaction engine**.
 

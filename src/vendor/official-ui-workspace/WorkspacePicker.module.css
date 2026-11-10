@@ -18,3 +18,22 @@
 .menuStatus {
   color: var(--dsw-alias-label-secondary);
 }
+
+.disambiguated {
+  gap: 4px;
+  min-width: 0;
+  display: flex;
+}
+
+.title,
+.pathSuffix {
+  text-overflow: ellipsis;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.pathSuffix {
+  flex: none;
+  max-width: 75%;
+  color: var(--dsw-alias-label-secondary);
+}

@@ -8,7 +8,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import clsx from 'clsx'
 import {
-  Button,
   IconArchiveCheckOutlineRegular,
   IconArchiveOutlineRegular,
   IconBranchOutlineRegular,
@@ -24,13 +23,12 @@ import {
   IconSearchOutlineRegular,
   IconWorkspaceTreeOutlineRegular,
   Menu,
-  Modal,
   Tooltip,
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { SessionListState } from '@deepseek-ai/dsh-api-session-controller/client'
 import type { WorkspaceId, WorkspaceView } from '@deepseek-ai/dsh-api-workspace-controller/client'
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
-import type { WorkspaceBrowserProps } from '../contract/slots.ts'
+import type { WorkspaceActionRequest, WorkspaceBrowserProps } from '../contract/slots.ts'
 import type { GroupNode, SearchResultNode, SessionNode, SessionOrderBy, SessionRowState } from '../tree.ts'
 import {
   deriveFlat,
@@ -61,68 +59,28 @@ import {
 import { uiLabel } from '../ui-label.ts'
 import { FLAT_SESSION_ORDER_KEY, type SessionGroupBy } from '../stores.ts'
 import { WorkspacePickFlow } from '../WorkspacePicker.tsx'
+import { WorkspaceDialogs } from './WorkspaceDialogs.tsx'
 import { AnimatedRows } from './AnimatedRows.tsx'
 import css from './WorkspaceBrowser.module.css'
 
 const EXPAND_SLIDE_MS = 300
 const SEARCH_DEBOUNCE_MS = 250
 const SEARCH_QUERY_MAX_CODE_UNITS = 500
-const SESSION_WATERMARK_BASE = 5
-const SESSION_WATERMARK_AUTO_MAX = 50
-
-function workspaceDisplayTitle(title: string, localizedDefault: string) {
-  return title === 'default-workspace' ? localizedDefault : title
-}
-
-function watermarkRows(
-  sessions: readonly SessionNode[],
-  watermark: number,
-): { rows: readonly SessionNode[]; hiddenCount: number } {
-  let count = 0
-  const rows = sessions.filter((session) => {
-    if (session.blank) return true
-    count += 1
-    return count <= watermark
-  })
-  return { rows, hiddenCount: Math.max(0, sessions.length - rows.length) }
-}
-
-function requiredWatermark(
-  sessions: readonly SessionNode[],
-  current: string | undefined,
-  revealSessionId: string | undefined,
-): number {
-  let required = SESSION_WATERMARK_BASE
-  let index = 0
-  for (const session of sessions) {
-    if (session.blank) continue
-    index += 1
-    if (
-      (index <= SESSION_WATERMARK_AUTO_MAX &&
-        (session.running ||
-          session.runningSubagentCount > 0 ||
-          session.pendingInteraction !== undefined ||
-          session.completed ||
-          session.id === current)) ||
-      session.id === revealSessionId
-    ) {
-      required = index
-    }
-  }
-  return required
-}
-
-function raiseWatermarks(
-  marks: Record<string, number>,
-  required: Map<string, number>,
-): Record<string, number> {
-  let raised = marks
-  for (const [key, watermark] of required) {
-    if (watermark > (raised[key] ?? SESSION_WATERMARK_BASE)) {
-      raised = { ...raised, [key]: watermark }
-    }
-  }
-  return raised
+import {
+  SESSION_WATERMARK_BASE,
+  SESSION_WATERMARK_AUTO_MAX,
+  workspaceDisplayTitle,
+  watermarkRows,
+  requiredWatermark,
+  raiseWatermarks,
+} from '../watermark.ts'
+export {
+  SESSION_WATERMARK_BASE,
+  SESSION_WATERMARK_AUTO_MAX,
+  workspaceDisplayTitle,
+  watermarkRows,
+  requiredWatermark,
+  raiseWatermarks,
 }
 
 function EmptySessions({
@@ -360,9 +318,14 @@ function FlatList({
   onLeaveArchivedOnly,
   animationResetKey,
   useSessionStatus,
+  useSessionAccess,
   open,
   onSessionRenameRequest,
   renderSlot,
+  openSessionMenu,
+  useContextMenu,
+  useContextMenuTarget,
+  home,
   usePanelInfo,
   setSessionOrder,
   workspaceReady,
@@ -378,9 +341,14 @@ function FlatList({
   onLeaveArchivedOnly?: () => void
   animationResetKey?: string
   useSessionStatus?: any
+  useSessionAccess?: any
   open: (sessionId: SessionId) => void
   onSessionRenameRequest: (id: SessionId, currentTitle: string) => void
   renderSlot?: any
+  openSessionMenu?: WorkspaceBrowserProps['openSessionMenu']
+  useContextMenu?: any
+  useContextMenuTarget?: any
+  home?: string | undefined
   usePanelInfo?: any
   setSessionOrder: (accountKey: string, order: readonly string[]) => void
   workspaceReady: boolean
@@ -476,6 +444,11 @@ function FlatList({
               onOpen={(id) => open(id as SessionId)}
               onRenameRequest={(id, title) => onSessionRenameRequest(id as SessionId, title)}
               renderSlot={renderSlot}
+              openSessionMenu={openSessionMenu}
+              useContextMenu={useContextMenu}
+              useContextMenuTarget={useContextMenuTarget}
+              home={home}
+              useSessionAccess={useSessionAccess}
               onReveal={
                 node.id === revealSessionId
                   ? () => {
@@ -526,7 +499,11 @@ function FlatList({
  */
 function SessionTree({
   list,
+  shortcuts,
   useSessionStatus,
+  useRemoteAccess,
+  useSessionAccess,
+  useWorkspaceAccess,
   startSession,
   open,
   workspaces,
@@ -540,6 +517,10 @@ function SessionTree({
   onDeleteRequest,
   onSessionRenameRequest,
   renderSlot,
+  openSessionMenu,
+  openWorkspaceMenu,
+  useContextMenu,
+  useContextMenuTarget,
   insertWorkspaceBefore,
   nestWorkspaces,
   groupExpansion,
@@ -554,7 +535,11 @@ function SessionTree({
   onSessionRevealed,
 }: {
   list: SessionListState
+  shortcuts?: readonly any[] | undefined
   useSessionStatus?: any
+  useRemoteAccess?: any
+  useSessionAccess?: any
+  useWorkspaceAccess?: any
   startSession: (workspaceId?: WorkspaceId) => void
   open: (sessionId: SessionId) => void
   workspaces: readonly WorkspaceView[]
@@ -568,6 +553,10 @@ function SessionTree({
   onDeleteRequest: (workspaceId: WorkspaceId, title: string) => void
   onSessionRenameRequest: (id: SessionId, currentTitle: string) => void
   renderSlot?: any
+  openSessionMenu?: WorkspaceBrowserProps['openSessionMenu']
+  openWorkspaceMenu?: WorkspaceBrowserProps['openWorkspaceMenu']
+  useContextMenu?: any
+  useContextMenuTarget?: any
   insertWorkspaceBefore: (workspaceId: WorkspaceId, beforeWorkspaceId?: WorkspaceId) => Promise<void>
   nestWorkspaces: boolean
   groupExpansion: Record<string, boolean>
@@ -889,6 +878,11 @@ function SessionTree({
           home={home}
           newShortcut={newShortcut}
           t={t}
+          openWorkspaceMenu={openWorkspaceMenu}
+          useContextMenu={useContextMenu}
+          useContextMenuTarget={useContextMenuTarget}
+          useRemoteAccess={useRemoteAccess}
+          useWorkspaceAccess={useWorkspaceAccess}
           onToggle={() => {
             if (group.expanded) {
               dropWatermarks((key) => withinGroup(key, group.key))
@@ -968,6 +962,11 @@ function SessionTree({
                 onOpen={(id) => open(id as SessionId)}
                 onRenameRequest={(id, title) => onSessionRenameRequest(id as SessionId, title)}
                 renderSlot={renderSlot}
+                openSessionMenu={openSessionMenu}
+                useContextMenu={useContextMenu}
+                useContextMenuTarget={useContextMenuTarget}
+                home={home}
+                useSessionAccess={useSessionAccess}
                 onReveal={
                   node.id === revealSessionId && group.key === revealGroup
                     ? () => {
@@ -1047,6 +1046,7 @@ function SessionTree({
 function SearchResults({
   useSessions,
   useSessionStatus,
+  useSessionAccess,
   open,
   onUnarchive,
   workspaces,
@@ -1059,6 +1059,7 @@ function SearchResults({
 }: {
   useSessions: any
   useSessionStatus?: any
+  useSessionAccess?: any
   open: (sessionId: SessionId) => void
   onUnarchive?: (sessionId: SessionId) => void
   workspaces: readonly WorkspaceView[]
@@ -1102,6 +1103,7 @@ function SearchResults({
             currentId={undefined}
             onOpen={(id) => open(id as SessionId)}
             onUnarchive={onUnarchive ? (id) => onUnarchive(id as SessionId) : undefined}
+            useSessionAccess={useSessionAccess}
             t={t}
           />
         ))}
@@ -1122,6 +1124,9 @@ export function WorkspaceBrowser({
   expandSidebar,
   useSessions,
   useSessionStatus,
+  useRemoteAccess,
+  useSessionAccess,
+  useWorkspaceAccess,
   useWorkspaces,
   useStore,
   actions,
@@ -1130,6 +1135,8 @@ export function WorkspaceBrowser({
   requestSessionRename,
   notifyArchivedNotOpenable,
   renameWorkspace,
+  useWorkspaceActionRequest,
+  settleWorkspaceAction,
   deleteWorkspace,
   insertWorkspaceBefore,
   unarchiveSession,
@@ -1146,6 +1153,10 @@ export function WorkspaceBrowser({
   setDirectoryBusy,
   dismissForkError,
   renderSlot,
+  openSessionMenu,
+  openWorkspaceMenu,
+  useContextMenuTarget,
+  useContextMenu,
   t,
 }: WorkspaceBrowserProps) {
   const shortcuts = typeof useShortcuts === 'function' ? useShortcuts((s: any) => s) : undefined
@@ -1580,86 +1591,20 @@ export function WorkspaceBrowser({
     }
   }, [normalizedQuery, searchSessions])
 
-  const [renameTarget, setRenameTarget] = useState<{
-    workspaceId: WorkspaceId
-    currentTitle: string
-  } | null>(null)
-  const [renameDraft, setRenameDraft] = useState('')
-  const [renaming, setRenaming] = useState(false)
-  const [renameError, setRenameError] = useState<string | null>(null)
-  const renameTrimmed = renameDraft.trim()
-  const renameDuplicate =
-    renameTarget !== null &&
-    renameTrimmed !== '' &&
-    renameTrimmed !== renameTarget.currentTitle &&
-    workspaces.some((w: any) => w.title === renameTrimmed)
-  const renameBlocked =
-    renaming ||
-    renameTrimmed === '' ||
-    renameTarget === null ||
-    renameTrimmed === renameTarget.currentTitle ||
-    renameDuplicate
+  const hookActionRequest =
+    typeof useWorkspaceActionRequest === 'function'
+      ? useWorkspaceActionRequest((value: any) => value)
+      : null
+  const [localActionRequest, setLocalActionRequest] =
+    useState<WorkspaceActionRequest | null>(null)
+  const workspaceActionRequest = hookActionRequest ?? localActionRequest
 
-  const closeRename = () => {
-    if (renaming) return
-    setRenameTarget(null)
-    setRenameError(null)
-  }
-
-  const confirmRename = () => {
-    if (renameBlocked) return
-    setRenaming(true)
-    setRenameError(null)
-    renameWorkspace(renameTarget.workspaceId, renameTrimmed)
-      .then(() => {
-        setRenaming(false)
-        setRenameTarget(null)
-      })
-      .catch((reason: any) => {
-        setRenaming(false)
-        setRenameError(reason instanceof Error ? reason.message : String(reason))
-      })
-  }
-
-  const [deleteTarget, setDeleteTarget] = useState<{
-    workspaceId: WorkspaceId
-    title: string
-  } | null>(null)
-  const [deleting, setDeleting] = useState(false)
-  const [deleteCommittedId, setDeleteCommittedId] = useState<WorkspaceId | null>(null)
-  const [deleteError, setDeleteError] = useState<string | null>(null)
-
-  useEffect(() => {
-    if (
-      deleteCommittedId === null ||
-      workspaces.some((workspace: any) => workspace.workspaceId === deleteCommittedId)
-    ) {
-      return
+  const handleSettleWorkspaceAction = useCallback(() => {
+    setLocalActionRequest(null)
+    if (typeof settleWorkspaceAction === 'function') {
+      settleWorkspaceAction()
     }
-    setDeleting(false)
-    setDeleteCommittedId(null)
-    setDeleteTarget(null)
-  }, [deleteCommittedId, workspaces])
-
-  const closeDelete = () => {
-    if (deleting) return
-    setDeleteTarget(null)
-    setDeleteError(null)
-  }
-
-  const confirmDelete = () => {
-    if (deleting || deleteTarget === null) return
-    setDeleting(true)
-    setDeleteError(null)
-    deleteWorkspace(deleteTarget.workspaceId)
-      .then(() => {
-        setDeleteCommittedId(deleteTarget.workspaceId)
-      })
-      .catch((reason: any) => {
-        setDeleting(false)
-        setDeleteError(reason instanceof Error ? reason.message : String(reason))
-      })
-  }
+  }, [settleWorkspaceAction])
 
   return (
     <div
@@ -1815,6 +1760,7 @@ export function WorkspaceBrowser({
             renderSlot?.('sidebar.workspaces.directoryFlow', owner)
           }
           addOnly={true}
+          onBusyChange={setDirectoryBusy}
           side="right"
           onPick={(workspaceId) => {
             if (typeof closeAddWorkspace === 'function') closeAddWorkspace()
@@ -1853,6 +1799,7 @@ export function WorkspaceBrowser({
             <SearchResults
               useSessions={useSessions}
               useSessionStatus={useSessionStatus}
+              useSessionAccess={useSessionAccess}
               open={openSearchResult}
               onUnarchive={(id) => unarchiveSession(id)}
               workspaces={workspaces}
@@ -1872,11 +1819,16 @@ export function WorkspaceBrowser({
               workspaceReady={workspaceReady}
               animationResetKey={groupBy}
               useSessionStatus={useSessionStatus}
+              useSessionAccess={useSessionAccess}
               open={guardedOpen}
               onSessionRenameRequest={(id, title) =>
                 requestSessionRename(id as SessionId, title)
               }
               renderSlot={renderSlot}
+              openSessionMenu={openSessionMenu}
+              useContextMenu={useContextMenu}
+              useContextMenuTarget={useContextMenuTarget}
+              home={home}
               usePanelInfo={usePanelInfo}
               setSessionOrder={saveSessionOrder}
               revealSessionId={revealSessionId}
@@ -1892,7 +1844,11 @@ export function WorkspaceBrowser({
           ) : (
             <SessionTree
               list={list}
+              shortcuts={shortcuts}
               useSessionStatus={useSessionStatus}
+              useRemoteAccess={useRemoteAccess}
+              useSessionAccess={useSessionAccess}
+              useWorkspaceAccess={useWorkspaceAccess}
               startSession={startSession}
               open={guardedOpen}
               workspaces={orderedWorkspaces}
@@ -1903,18 +1859,29 @@ export function WorkspaceBrowser({
               animationResetKey={groupBy}
               usePanelInfo={usePanelInfo}
               onRenameRequest={(workspaceId, currentTitle) => {
-                setRenameTarget({ workspaceId, currentTitle })
-                setRenameDraft(currentTitle)
-                setRenameError(null)
+                setLocalActionRequest({
+                  action: 'rename',
+                  workspaceId,
+                  displayTitle: currentTitle,
+                  storedTitle: currentTitle,
+                })
               }}
               onDeleteRequest={(workspaceId, title) => {
-                setDeleteTarget({ workspaceId, title })
-                setDeleteError(null)
+                setLocalActionRequest({
+                  action: 'delete',
+                  workspaceId,
+                  displayTitle: title,
+                  storedTitle: title,
+                })
               }}
               onSessionRenameRequest={(id, title) =>
                 requestSessionRename(id as SessionId, title)
               }
               renderSlot={renderSlot}
+              openSessionMenu={openSessionMenu}
+              openWorkspaceMenu={openWorkspaceMenu}
+              useContextMenu={useContextMenu}
+              useContextMenuTarget={useContextMenuTarget}
               insertWorkspaceBefore={insertWorkspaceBefore}
               nestWorkspaces={groupBy === 'workspace-tree'}
               groupExpansion={groupExpansion}
@@ -1931,66 +1898,17 @@ export function WorkspaceBrowser({
           ))}
       </div>
 
-      {/* Rename dialog */}
-      <Modal
-        open={renameTarget !== null}
-        onClose={closeRename}
-        closeLabel={t('close')}
-        title={t('rename.workspace.title')}
-        footer={
-          <>
-            <Button variant="outline" disabled={renaming} onClick={closeRename}>
-              {t('cancel')}
-            </Button>
-            <Button variant="primary" disabled={renameBlocked} onClick={confirmRename}>
-              {t('rename')}
-            </Button>
-          </>
-        }
-      >
-        <input
-          className={css.renameInput}
-          value={renameDraft}
-          aria-label={t('field.workspaceName')}
-          autoFocus
-          disabled={renaming}
-          onChange={(e) => {
-            setRenameDraft(e.target.value)
-          }}
-          onCompositionStart={() => {
-            composingRef.current = true
-          }}
-          onCompositionEnd={() => {
-            composingRef.current = false
-          }}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter' && !composingRef.current && !renameBlocked) confirmRename()
-            else if (e.key === 'Escape') closeRename()
-          }}
+      {workspaceActionRequest !== null && (
+        <WorkspaceDialogs
+          request={workspaceActionRequest}
+          workspaces={workspaces}
+          renameWorkspace={renameWorkspace}
+          deleteWorkspace={deleteWorkspace}
+          settleWorkspaceAction={handleSettleWorkspaceAction}
+          t={t}
+          key={`${workspaceActionRequest.action}/${workspaceActionRequest.workspaceId}`}
         />
-        {renameError && <div className={css.dialogError}>{renameError}</div>}
-      </Modal>
-
-      {/* Delete confirmation dialog */}
-      <Modal
-        open={deleteTarget !== null}
-        onClose={closeDelete}
-        closeLabel={t('close')}
-        title={uiLabel(`删除工作区 "${deleteTarget?.title ?? ''}"`, `Delete workspace "${deleteTarget?.title ?? ''}"`)}
-        footer={
-          <>
-            <Button variant="outline" disabled={deleting} onClick={closeDelete}>
-              {t('cancel')}
-            </Button>
-            <Button variant="primary" disabled={deleting} onClick={confirmDelete}>
-              {uiLabel('删除', 'Delete')}
-            </Button>
-          </>
-        }
-      >
-        <div>{uiLabel('仅删除工作区注册记录，会话日志和目录文件保留。', 'Deletes only the workspace registration record; files remain.')}</div>
-        {deleteError && <div className={css.dialogError}>{deleteError}</div>}
-      </Modal>
+      )}
     </div>
   )
 }

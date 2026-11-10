@@ -11,3 +11,13 @@ declare module '@deepseek-ai/dsh-client-ui-slots' {
     workspace: any
   }
 }
+
+declare module '@deepseek-ai/dsh-client-ui-context-menu/client' {
+  export interface ContextMenuTarget {
+    kind: string
+    value: any
+  }
+  export interface ContextMenuTargetMap {
+    [key: string]: any
+  }
+}

@@ -1,6 +1,6 @@
 /**
  * Workspace browser tree row components: pure presentational.
- * Fully aligned with DSH 0.1.7-rc.1 while providing hierarchical fork-tree
+ * Fully aligned with DSH 0.2.2-rc.1 while providing hierarchical fork-tree
  * indentation, branch chevrons, branch descendant count badges, and slot-rendered actions.
  */
 import { useEffect, useRef, useState, useMemo } from 'react'
@@ -28,12 +28,92 @@ import {
   StateDot,
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { StateDotState } from '@deepseek-ai/dsh-client-ui-primitives'
+import type { WorkspaceId } from '@deepseek-ai/dsh-api-workspace-controller/client'
 import { abbreviateHomePath } from '@deepseek-ai/dsh-util-workspace-path'
+import type { SessionId } from '@deepseek-ai/dsh-session/types'
 import type { WorkspaceBrowserProps } from '../contract/slots.ts'
 import type { GroupNode, SearchResultNode, SessionNode } from '../tree.ts'
 import { countDescendants, aggregateDescendantStatus, type BranchNode } from '../branch.ts'
 import { uiLabel } from '../ui-label.ts'
 import css from './Rows.module.css'
+
+export const DRAG_PREVIEW_PROPERTIES = [
+  '--dsh-sidebar-row-padding',
+  '--dsh-sidebar-label-gap',
+  '--dsh-sidebar-paint-inset',
+] as const
+
+/**
+ * Native drag preview using an inert offscreen row copy.
+ */
+export function useRowDragPreview(
+  className?: string,
+  inheritedProperties?: readonly string[],
+) {
+  const current = useRef<HTMLElement | null>(null)
+  const dragging = useRef(false)
+  const preview = useMemo(() => {
+    const clear = () => {
+      const wasDragging = dragging.current
+      dragging.current = false
+      current.current?.remove()
+      current.current = null
+      return wasDragging
+    }
+    return {
+      clear,
+      start: (event: React.DragEvent, row: HTMLElement = event.currentTarget as HTMLElement) => {
+        clear()
+        dragging.current = true
+        const rect = row.getBoundingClientRect()
+        const style = getComputedStyle(row)
+        const copy = row.cloneNode(true) as HTMLElement
+        copy.removeAttribute('data-row-key')
+        copy.tabIndex = -1
+        for (const control of copy.querySelectorAll<HTMLElement>(
+          'button, a[href], input, select, textarea, [tabindex], [contenteditable]',
+        )) {
+          control.tabIndex = -1
+        }
+        copy.style.color = style.color
+        copy.style.paddingInlineStart = style.paddingInlineStart
+        const image = row.ownerDocument.createElement('div')
+        if (className) image.className = clsx(className)
+        image.inert = true
+        image.setAttribute('aria-hidden', 'true')
+        inheritedProperties?.forEach((property) => {
+          image.style.setProperty(property, style.getPropertyValue(property))
+        })
+        Object.assign(image.style, {
+          position: 'fixed',
+          top: '0px',
+          pointerEvents: 'none',
+          left: `${String(-rect.width)}px`,
+          width: `${String(rect.width)}px`,
+          height: `${String(rect.height)}px`,
+          font: style.font,
+        })
+        image.append(copy)
+        row.ownerDocument.body.append(image)
+        current.current = image
+        try {
+          event.dataTransfer.setDragImage(
+            image,
+            event.clientX - rect.left,
+            event.clientY - rect.top,
+          )
+        } catch (_error) {
+          image.remove()
+          current.current = null
+        }
+      },
+    }
+  }, [className, inheritedProperties])
+  useEffect(() => () => {
+    preview.clear()
+  }, [preview])
+  return preview
+}
 
 const MIN_TITLE_REVEAL_PX = 8
 const TITLE_MARQUEE_PX_PER_MS = 0.03
@@ -62,14 +142,18 @@ function restTitle(title: HTMLElement) {
 
 function useTitleMarquee(titleRef: React.RefObject<HTMLElement | null>) {
   const frame = useRef(0)
+  const revealing = useRef(false)
   useEffect(() => {
     return () => {
       cancelAnimationFrame(frame.current)
     }
   }, [])
   return useMemo(() => ({
-    enter: () => {
+    enter: (event?: React.PointerEvent) => {
+      if (event?.pointerType === 'touch') return
       if (titleRef.current === null) return
+      if (revealing.current) return
+      revealing.current = true
       const element = titleRef.current
       const range = element.scrollWidth - element.clientWidth
       if (range <= MIN_TITLE_REVEAL_PX) return
@@ -91,6 +175,7 @@ function useTitleMarquee(titleRef: React.RefObject<HTMLElement | null>) {
       frame.current = requestAnimationFrame(step)
     },
     leave: () => {
+      revealing.current = false
       cancelAnimationFrame(frame.current)
       if (titleRef.current === null) return
       restTitle(titleRef.current)
@@ -101,10 +186,8 @@ function useTitleMarquee(titleRef: React.RefObject<HTMLElement | null>) {
 /** The standard locale seat, prop-passed from the browser root. */
 type RowTranslate = WorkspaceBrowserProps['t']
 
-/** Row display title: blank rows show the localized New Session label. */
-export function displayTitle(node: SessionNode, t: RowTranslate): string {
-  return node.blank ? t('session.new') : node.title || t('session.untitled')
-}
+import { displayTitle } from '../watermark.ts'
+export { displayTitle }
 
 /** Localized compact relative time ("刚刚"/"5分钟" in zh, "now"/"5min" in en). */
 export function timeLabel(updatedAt: number, now: number, t: RowTranslate): string {
@@ -172,18 +255,7 @@ export function rowHalf(e: { clientY: number; currentTarget: HTMLElement }): 'be
 /**
  * Project (workspace) header row: folder + title.
  */
-export function ProjectRowItem({
-  group,
-  onToggle,
-  onCreate,
-  actions,
-  drag,
-  home,
-  newShortcut,
-  t,
-  currentCollapsed,
-  containsCurrentDescendant,
-}: {
+export function ProjectRowItem(props: {
   group: GroupNode
   onToggle: () => void
   onCreate: () => void
@@ -194,17 +266,119 @@ export function ProjectRowItem({
   t: RowTranslate
   currentCollapsed?: boolean | undefined
   containsCurrentDescendant?: boolean | undefined
+  openWorkspaceMenu?: (
+    workspaceId: WorkspaceId,
+    path: string,
+    displayTitle: string,
+    point: { x: number; y: number },
+    mode?: 'toggle',
+  ) => void
+  useContextMenuTarget?: any
+  useContextMenu?: any
+  useRemoteAccess?: any
+  useWorkspaceAccess?: any
 }) {
+  const workspaceId = props.group.workspaceId
+  return workspaceId === undefined ? (
+    <UngroupedProjectRow {...props} />
+  ) : (
+    <WorkspaceProjectRow {...props} workspaceId={workspaceId} />
+  )
+}
+
+function UngroupedProjectRow(
+  props: Parameters<typeof ProjectRowItem>[0],
+) {
+  const create =
+    typeof props.useRemoteAccess === 'function'
+      ? props.useRemoteAccess('session/create')
+      : true
+  return (
+    <ProjectRow
+      {...props}
+      access={{
+        create: create ?? true,
+        reorder: false,
+      }}
+    />
+  )
+}
+
+function WorkspaceProjectRow({
+  workspaceId,
+  ...props
+}: Parameters<typeof ProjectRowItem>[0] & { workspaceId: WorkspaceId }) {
+  const { useWorkspaceAccess } = props
+  const access = {
+    create:
+      typeof useWorkspaceAccess === 'function'
+        ? (useWorkspaceAccess(workspaceId, 'session/create') ?? true)
+        : true,
+    reorder:
+      typeof useWorkspaceAccess === 'function'
+        ? (useWorkspaceAccess(workspaceId, 'workspace/insertBefore') ?? true)
+        : true,
+  }
+  return <ProjectRow {...props} access={access} />
+}
+
+export function ProjectRow({
+  group,
+  onToggle,
+  onCreate,
+  actions,
+  drag: offeredDrag,
+  home,
+  newShortcut,
+  t,
+  currentCollapsed,
+  containsCurrentDescendant,
+  access = { create: true, reorder: true },
+  openWorkspaceMenu,
+  useContextMenuTarget,
+  useContextMenu,
+}: Parameters<typeof ProjectRowItem>[0] & {
+  access?: { create: boolean; reorder: boolean }
+}) {
+  const { getTriggerProps } =
+    typeof useContextMenu === 'function'
+      ? useContextMenu()
+      : { getTriggerProps: () => ({}) }
+  const drag = access.reorder ? offeredDrag : undefined
   const row = group
   const label = row.workspaceId === undefined ? t('group.ungrouped') : row.label
   const active =
     (group.expanded && group.containsCurrent) ||
     (!group.expanded && (currentCollapsed || containsCurrentDescendant))
-  const [menuOpen, setMenuOpen] = useState(false)
+  const externalMenuOpen =
+    typeof useContextMenuTarget === 'function'
+      ? useContextMenuTarget(
+          (target: any) =>
+            target?.kind === 'workspace' &&
+            target.value.workspaceId === row.workspaceId,
+        )
+      : false
+  const [localMenuOpen, setLocalMenuOpen] = useState(false)
+  const menuOpen = externalMenuOpen || localMenuOpen
+
+  const dragPreview = useRowDragPreview(css.dragPreview, DRAG_PREVIEW_PROPERTIES)
   const workspaceMenuItems = [
     { id: 'rename', label: t('rename'), icon: <IconEditOutlineRegular /> },
-    { id: 'delete', label: t('delete.workspace'), icon: <IconTrashOutlineRegular />, danger: true },
+    {
+      id: 'delete',
+      label: t('delete.workspace'),
+      icon: <IconTrashOutlineRegular />,
+      danger: true,
+    },
   ]
+  const workspaceMenuTarget =
+    row.workspaceId !== undefined && row.cwd !== undefined
+      ? {
+          workspaceId: row.workspaceId,
+          path: row.cwd,
+        }
+      : undefined
+
   const ownRow = (
     <div
       data-row-key={`workspace:${row.key}`}
@@ -212,6 +386,17 @@ export function ProjectRowItem({
       role="treeitem"
       aria-expanded={row.expanded}
       onClick={onToggle}
+      {...getTriggerProps(
+        workspaceMenuTarget === undefined
+          ? undefined
+          : {
+              kind: 'workspace',
+              value: {
+                ...workspaceMenuTarget,
+                displayTitle: label,
+              },
+            },
+      )}
       draggable={drag !== undefined}
       onDragStart={
         drag === undefined
@@ -220,9 +405,12 @@ export function ProjectRowItem({
               e.dataTransfer.effectAllowed = 'move'
               e.dataTransfer.setData('text/plain', row.key)
               drag.start()
+              dragPreview.start(e)
             }
       }
-      onDragEnd={drag?.end}
+      onDragEnd={() => {
+        if (dragPreview.clear()) drag?.end()
+      }}
     >
       <span className={clsx(css.slot, css.folder, active && css.folderActive)}>
         {row.expanded ? <IconFolderOpenRegular /> : <IconFolderCloseRegular />}
@@ -236,15 +424,40 @@ export function ProjectRowItem({
         <span className={css.title}>{label}</span>
       </span>
       <span className={css.rowActions}>
-        {actions !== undefined && (
+        {workspaceMenuTarget !== undefined && openWorkspaceMenu !== undefined ? (
+          <button
+            type="button"
+            className={css.iconButton}
+            data-context-menu-trigger="true"
+            aria-label={t('actions.workspace.aria', { name: label })}
+            aria-haspopup="menu"
+            aria-expanded={menuOpen}
+            onClick={(event) => {
+              event.stopPropagation()
+              const rect = event.currentTarget.getBoundingClientRect()
+              openWorkspaceMenu(
+                workspaceMenuTarget.workspaceId,
+                workspaceMenuTarget.path,
+                label,
+                {
+                  x: rect.left,
+                  y: rect.bottom,
+                },
+                'toggle',
+              )
+            }}
+          >
+            <IconEllipsisOutlineRegular />
+          </button>
+        ) : actions !== undefined ? (
           <Menu
-            open={menuOpen}
+            open={localMenuOpen}
             onClose={() => {
-              setMenuOpen(false)
+              setLocalMenuOpen(false)
             }}
             items={workspaceMenuItems}
             onSelect={(id) => {
-              setMenuOpen(false)
+              setLocalMenuOpen(false)
               if (id === 'rename') actions.rename()
               else if (id === 'delete') actions.delete()
             }}
@@ -257,32 +470,41 @@ export function ProjectRowItem({
                 aria-label={t('actions.workspace.aria', { name: label })}
                 onClick={(e) => {
                   e.stopPropagation()
-                  setMenuOpen((v) => !v)
+                  setLocalMenuOpen((v) => !v)
                 }}
               >
                 <IconEllipsisOutlineRegular />
               </button>
             }
           />
-        )}
-        <Tooltip
-          label={newShortcut?.keystroke ? `${t('actions.newSession')} (${newShortcut.keystroke})` : t('actions.newSession')}
-          side="bottom"
-          align="end"
-          delayMs={500}
-        >
-          <button
-            type="button"
-            className={css.iconButton}
-            aria-label={t('actions.newSession.aria', { name: label })}
-            onClick={(e) => {
-              e.stopPropagation()
-              onCreate()
-            }}
+        ) : null}
+        {access.create && (
+          <Tooltip
+            label={
+              newShortcut?.keystroke
+                ? `${t('actions.newSession')} (${newShortcut.keystroke})`
+                : t('actions.newSession')
+            }
+            shortcutKeys={newShortcut?.keys}
+            side="bottom"
+            align="end"
+            delayMs={500}
+            portal
           >
-            <IconNewChatOutlineRegular />
-          </button>
-        </Tooltip>
+            <button
+              type="button"
+              className={css.iconButton}
+              aria-keyshortcuts={newShortcut?.aria}
+              aria-label={t('actions.newSession.aria', { name: label })}
+              onClick={(e) => {
+                e.stopPropagation()
+                onCreate()
+              }}
+            >
+              <IconNewChatOutlineRegular size={14} />
+            </button>
+          </Tooltip>
+        )}
       </span>
     </div>
   )
@@ -299,6 +521,8 @@ export function ProjectRowItem({
           t={t}
         />
       }
+      openDelayMs={800}
+      {...({ grouped: true } as any)}
       disabled={menuOpen}
       copyText={row.cwd}
       copyLabel={t('copy')}
@@ -428,12 +652,14 @@ function PinnedIndicator({ t }: { t: RowTranslate }) {
 
 function SessionHoverContent({
   node,
+  cwd,
   now,
   t,
   path = [],
   renderSlot,
 }: {
   node: SessionNode
+  cwd?: string | undefined
   now: number
   t: RowTranslate
   path?: readonly string[]
@@ -451,6 +677,9 @@ function SessionHoverContent({
         </div>
       )}
       <div className={css.hoverTitle}>{displayTitle(node, t)}</div>
+      {cwd !== undefined && (
+        <div className={css.hoverPath}>{cwd}</div>
+      )}
       {!node.blank && (
         <div className={css.hoverTime}>{hoverTimeLabel(node.updatedAt, now, t)}</div>
       )}
@@ -470,15 +699,21 @@ export function SearchResultItem({
   currentId,
   onOpen,
   onUnarchive,
+  useSessionAccess,
   t,
 }: {
   result: SearchResultNode
   currentId: string | undefined
   onOpen: (id: SearchResultNode['id']) => void
   onUnarchive?: (id: SearchResultNode['id']) => void
+  useSessionAccess?: any
   t: RowTranslate
 }) {
   const selected = result.id === currentId
+  const canUnarchive =
+    typeof useSessionAccess === 'function'
+      ? (useSessionAccess(result.id, 'workspace/unarchiveSession') ?? true)
+      : true
   const statuses = sessionStatuses(result, t)
   const primaryStatus = statuses[0]
   return (
@@ -502,13 +737,14 @@ export function SearchResultItem({
           )}
         </span>
         <span className={css.searchResultTitle}>{result.title || t('session.untitled')}</span>
-        {result.archived && onUnarchive !== undefined && (
+        {result.archived && onUnarchive !== undefined && canUnarchive && (
           <span className={css.rowActions}>
             <Tooltip
               label={t('actions.unarchive')}
               side="bottom"
               align="end"
               delayMs={500}
+              portal
             >
               <button
                 type="button"
@@ -548,6 +784,9 @@ export function SessionNodeItem({
   onOpen,
   onRenameRequest,
   renderSlot,
+  openSessionMenu,
+  useContextMenuTarget,
+  useContextMenu,
   onReveal,
   drag,
   flat = false,
@@ -556,6 +795,8 @@ export function SessionNodeItem({
   onToggleCollapse,
   path = [],
   isCurrentCollapsedAncestor = false,
+  home,
+  useSessionAccess,
   t,
 }: {
   node: SessionNode
@@ -564,6 +805,14 @@ export function SessionNodeItem({
   onOpen: (id: SessionNode['id']) => void
   onRenameRequest?: (id: SessionNode['id'], currentTitle: string) => void
   renderSlot?: any
+  openSessionMenu?: (
+    sessionId: SessionId,
+    displayTitle: string,
+    point: { x: number; y: number },
+    mode?: 'toggle',
+  ) => void
+  useContextMenuTarget?: any
+  useContextMenu?: any
   onReveal?: (() => void) | undefined
   drag?: RowDragProps | undefined
   flat?: boolean | undefined
@@ -572,13 +821,28 @@ export function SessionNodeItem({
   onToggleCollapse?: ((id: SessionNode['id']) => void) | undefined
   path?: readonly string[] | undefined
   isCurrentCollapsedAncestor?: boolean | undefined
+  home?: string | undefined
+  useSessionAccess?: any
   t: RowTranslate
 }) {
+  const { getTriggerProps } =
+    typeof useContextMenu === 'function'
+      ? useContextMenu()
+      : { getTriggerProps: () => ({}) }
   const row = node
   const title = displayTitle(node, t)
   const selected = node.id === currentId
   const branchChildren = node.children ?? []
   const totalDescendants = countDescendants(node as unknown as BranchNode)
+
+  const renamable =
+    typeof useSessionAccess === 'function'
+      ? (useSessionAccess(node.id, 'session/rename') ?? true)
+      : true
+  const reorderable =
+    typeof useSessionAccess === 'function'
+      ? (useSessionAccess(node.id, 'workspace/insertSessionBefore') ?? true)
+      : true
 
   const statuses = useMemo(() => {
     const ownStatuses = sessionStatuses(node, t)
@@ -607,14 +871,34 @@ export function SessionNodeItem({
 
   const primaryStatus = statuses[0]
   const showStatus = primaryStatus.state !== 'idle'
-  const draggable = drag !== undefined && !row.blank && !row.archived
-  const [menuOpen, setMenuOpen] = useState(false)
-  const [rowHovered, setRowHovered] = useState(false)
-  const menuOpenState = useMemo(() => [menuOpen, setMenuOpen], [menuOpen])
+  const draggable = drag !== undefined && reorderable && !row.blank && !row.archived
+
+  const externalMenuOpen =
+    typeof useContextMenuTarget === 'function'
+      ? useContextMenuTarget(
+          (target: any) =>
+            target?.kind === 'session' && target.value.sessionId === node.id,
+        )
+      : false
+  const [localMenuOpen, setLocalMenuOpen] = useState(false)
+  const menuOpen = externalMenuOpen || localMenuOpen
+  const menuOpenState = useMemo(() => [localMenuOpen, setLocalMenuOpen] as const, [localMenuOpen])
+
+  const dragPreview = useRowDragPreview(css.dragPreview, DRAG_PREVIEW_PROPERTIES)
   const rowRef = useRef<HTMLDivElement>(null)
   const titleRef = useRef<HTMLSpanElement>(null)
+  const renameArmed = useRef(false)
+  const disarmRename = useRef(() => {
+    renameArmed.current = false
+  }).current
+
   const marquee = useTitleMarquee(titleRef)
   const hasBranchToggle = branchChildren.length > 0 && onToggleCollapse !== undefined
+
+  useEffect(() => {
+    if (menuOpen || rowRef.current?.matches(':hover')) marquee.enter()
+    else marquee.leave()
+  }, [menuOpen, marquee])
 
   useEffect(() => {
     if (onReveal === undefined) return
@@ -650,18 +934,46 @@ export function SessionNodeItem({
       role="treeitem"
       aria-level={depth + 1}
       aria-selected={selected}
-      aria-description={row.archived ? uiLabel('已归档的会话无法直接打开', 'Archived session cannot be opened') : undefined}
+      aria-description={
+        row.archived
+          ? t('toast.archivedNotOpenable') ||
+            uiLabel('已归档的会话无法直接打开', 'Archived session cannot be opened')
+          : undefined
+      }
       {...(branchChildren.length > 0 ? { 'aria-expanded': !collapsed } : {})}
+      tabIndex={0}
       onClick={() => {
         onOpen(node.id)
       }}
+      {...getTriggerProps(
+        row.blank
+          ? undefined
+          : {
+              kind: 'session',
+              value: {
+                sessionId: node.id,
+                displayTitle: row.title,
+              },
+            },
+        {
+          onKeyDown: (event: React.KeyboardEvent) => {
+            if (
+              event.target !== event.currentTarget ||
+              (event.key !== 'Enter' && event.key !== ' ')
+            )
+              return
+            if (event.altKey || event.ctrlKey || event.metaKey || event.shiftKey)
+              return
+            event.preventDefault()
+            onOpen(node.id)
+          },
+        },
+      )}
       onPointerEnter={() => {
-        setRowHovered(true)
         marquee.enter()
       }}
       onPointerLeave={() => {
-        setRowHovered(false)
-        marquee.leave()
+        if (!menuOpen) marquee.leave()
       }}
       draggable={draggable}
       onDragStart={
@@ -671,9 +983,12 @@ export function SessionNodeItem({
               e.dataTransfer.effectAllowed = 'move'
               e.dataTransfer.setData('text/plain', node.id)
               drag.start()
+              dragPreview.start(e)
             }
       }
-      onDragEnd={!draggable ? undefined : drag.end}
+      onDragEnd={() => {
+        if (dragPreview.clear()) drag?.end()
+      }}
       onDragOver={
         drag === undefined
           ? undefined
@@ -699,7 +1014,11 @@ export function SessionNodeItem({
         <button
           type="button"
           className={css.branchToggleSlot}
-          aria-label={collapsed ? uiLabel('展开分支', 'Expand branch') : uiLabel('折叠分支', 'Collapse branch')}
+          aria-label={
+            collapsed
+              ? uiLabel('展开分支', 'Expand branch')
+              : uiLabel('折叠分支', 'Collapse branch')
+          }
           aria-expanded={!collapsed}
           onPointerDown={(e) => {
             e.stopPropagation()
@@ -733,22 +1052,30 @@ export function SessionNodeItem({
 
       {/* Status dot / Leading slot */}
       <span className={css.slot}>
-        {!row.archived && !row.blank && (
-          showStatus
+        {!row.archived &&
+          !row.blank &&
+          (showStatus
             ? <SessionStatusDots statuses={statuses} />
-            : (renderSlot?.('sidebar.session.row.leading', { sessionId: node.id }) ?? null)
-        )}
+            : (renderSlot?.('sidebar.session.row.leading', { sessionId: node.id }) ??
+              null))}
       </span>
 
       {/* Title */}
       <span
         ref={titleRef}
         className={css.title}
+        onMouseDown={(e) => {
+          if (e.detail !== 1) return
+          renameArmed.current = true
+          window.addEventListener('blur', disarmRename, { once: true })
+        }}
         onDoubleClick={
-          row.blank
+          row.blank || !renamable
             ? undefined
             : (e) => {
                 e.stopPropagation()
+                if (!renameArmed.current) return
+                renameArmed.current = false
                 onRenameRequest?.(node.id, row.title)
               }
         }
@@ -771,16 +1098,20 @@ export function SessionNodeItem({
         </span>
       )}
 
-      {/* Pinned indicator */}
-      {row.pinned && !row.archived && <PinnedIndicator t={t} />}
-
-      {/* Time / trailing label */}
+      {/* Time, trailing slot, and pin indicator wrapped in rowResting */}
       {!row.blank && (
-        <span
-          className={css.time}
-          aria-hidden={primaryStatus.trailingLabel === undefined ? undefined : true}
-        >
-          {primaryStatus.trailingLabel ?? timeLabel(row.updatedAt, now, t)}
+        <span className={css.rowResting}>
+          <span
+            className={clsx(
+              css.time,
+              primaryStatus.trailingLabel === undefined && css.timestamp,
+            )}
+            aria-hidden={primaryStatus.trailingLabel === undefined ? undefined : true}
+          >
+            {primaryStatus.trailingLabel ?? timeLabel(row.updatedAt, now, t)}
+          </span>
+          {renderSlot?.('sidebar.session.row.trailing', { sessionId: node.id })}
+          {row.pinned && !row.archived && <PinnedIndicator t={t} />}
         </span>
       )}
 
@@ -792,12 +1123,45 @@ export function SessionNodeItem({
             e.stopPropagation()
           }}
         >
-          {renderSlot ? (
+          {openSessionMenu !== undefined ? (
+            <>
+              <button
+                type="button"
+                className={css.iconButton}
+                aria-label={t('actions.session.aria', { name: title })}
+                onPointerDown={(event) => {
+                  event.stopPropagation()
+                }}
+                data-context-menu-trigger=""
+                onClick={(event) => {
+                  event.currentTarget.focus({ preventScroll: true })
+                  const rect = event.currentTarget.getBoundingClientRect()
+                  openSessionMenu(
+                    node.id,
+                    row.title,
+                    {
+                      x: rect.left,
+                      y: rect.bottom,
+                    },
+                    'toggle',
+                  )
+                }}
+              >
+                <IconEllipsisOutlineRegular />
+              </button>
+              <span className={css.rowQuickActions}>
+                {renderSlot?.('sidebar.workspaces.session.row.action', {
+                  sessionId: node.id,
+                  displayTitle: row.title,
+                })}
+              </span>
+            </>
+          ) : renderSlot ? (
             <>
               <Menu
-                open={menuOpen}
+                open={localMenuOpen}
                 onClose={() => {
-                  setMenuOpen(false)
+                  setLocalMenuOpen(false)
                 }}
                 portal
                 closeOnPointerLeave
@@ -808,7 +1172,7 @@ export function SessionNodeItem({
                     className={css.iconButton}
                     aria-label={t('actions.session.aria', { name: title })}
                     onClick={() => {
-                      setMenuOpen((v) => !v)
+                      setLocalMenuOpen((v) => !v)
                     }}
                   >
                     <IconEllipsisOutlineRegular />
@@ -831,16 +1195,16 @@ export function SessionNodeItem({
             </>
           ) : (
             <Menu
-              open={menuOpen}
+              open={localMenuOpen}
               onClose={() => {
-                setMenuOpen(false)
+                setLocalMenuOpen(false)
               }}
               items={[
                 { id: 'rename', label: t('rename'), icon: <IconEditOutlineRegular /> },
                 { id: 'fork', label: t('menu.fork'), icon: <IconBranchOutlineRegular /> },
               ]}
               onSelect={(id) => {
-                setMenuOpen(false)
+                setLocalMenuOpen(false)
                 if (id === 'rename') onRenameRequest?.(node.id, row.title)
               }}
               portal
@@ -851,7 +1215,7 @@ export function SessionNodeItem({
                   className={css.iconButton}
                   aria-label={t('actions.session.aria', { name: title })}
                   onClick={() => {
-                    setMenuOpen((v) => !v)
+                    setLocalMenuOpen((v) => !v)
                   }}
                 >
                   <IconEllipsisOutlineRegular />
@@ -867,10 +1231,20 @@ export function SessionNodeItem({
   return (
     <HoverCard
       anchor={ownRow}
-      content={<SessionHoverContent node={node} now={now} t={t} path={path} renderSlot={renderSlot} />}
+      content={
+        <SessionHoverContent
+          node={node}
+          cwd={row.cwd === undefined ? undefined : abbreviateHomePath(row.cwd, home)}
+          now={now}
+          t={t}
+          path={path}
+          renderSlot={renderSlot}
+        />
+      }
       openDelayMs={800}
+      {...({ grouped: true } as any)}
       disabled={menuOpen || drag?.active === true}
-      copyText={row.blank ? undefined : row.title}
+      copyText={row.blank || row.title === '' ? undefined : row.title}
       copyLabel={t('copy')}
       copiedLabel={t('hover.copied')}
     />

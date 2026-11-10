@@ -19,21 +19,8 @@ interface RowPosition {
   opacity: number
 }
 
-function sameRows(previous: AnimatedRowsProps, next: AnimatedRowsProps) {
-  return (
-    previous.rowKeys.length === next.rowKeys.length &&
-    previous.rowKeys.every((key, index) => key === next.rowKeys[index])
-  )
-}
-
-function intersects(row: DOMRect, viewport: DOMRect) {
-  return (
-    row.bottom > viewport.top &&
-    row.top < viewport.bottom &&
-    row.right > viewport.left &&
-    row.left < viewport.right
-  )
-}
+import { sameRows, intersects } from '../watermark.ts'
+export { sameRows, intersects }
 
 export class AnimatedRows extends Component<AnimatedRowsProps> {
   private armed = false

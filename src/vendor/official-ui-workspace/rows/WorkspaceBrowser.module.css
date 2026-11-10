@@ -43,12 +43,17 @@
   justify-content: flex-end;
   gap: 4px;
   height: 36px;
-  padding-left: 4px;
+  padding-left: var(--dsh-sidebar-row-padding, 12px);
   margin-bottom: 4px;
   box-sizing: border-box;
   border-radius: 12px;
   overflow: hidden;
   color: var(--dsw-alias-label-tertiary);
+}
+
+.sectionHeader:has(.searchExpanded),
+.sectionHeader:has(.searchSlotExpanded) {
+  padding-inline: calc(var(--dsh-sidebar-paint-inset, 3px) + 1px);
 }
 
 .root:not(.rail) .sectionHeader {
@@ -430,7 +435,7 @@
   height: 28px;
   border: none;
   border-radius: 8px;
-  padding: 0 12px 0 28px;
+  padding: 0 var(--dsh-sidebar-row-padding, 12px) 0 calc(var(--dsh-sidebar-row-padding, 12px) + 16px + var(--dsh-sidebar-label-gap, 6px) + var(--dsh-workspace-indent, 0px));
   background: transparent;
   cursor: pointer;
   text-align: left;
@@ -528,5 +533,12 @@
   .searchInput,
   .headerActions {
     transition: none;
+  }
+}
+
+@media (pointer: coarse) {
+  .searchInput,
+  .renameInput {
+    font-size: 16px;
   }
 }

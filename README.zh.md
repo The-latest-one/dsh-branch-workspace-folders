@@ -3,11 +3,11 @@
 🌐 [English](README.md) | **中文**
 
 [![Version](https://img.shields.io/badge/version-v0.2.2-blue.svg)](package.json)
-[![DSH Compatibility](https://img.shields.io/badge/DSH-v0.2.1--rc.3-success.svg)](package.json)
+[![DSH Compatibility](https://img.shields.io/badge/DSH-v0.2.2--rc.1-success.svg)](package.json)
 [![CI](https://github.com/The-latest-one/dsh-branch-workspace-folders/actions/workflows/ci.yml/badge.svg)](https://github.com/The-latest-one/dsh-branch-workspace-folders/actions)
 [![GitHub Release](https://img.shields.io/github/v/release/The-latest-one/dsh-branch-workspace-folders)](https://github.com/The-latest-one/dsh-branch-workspace-folders/releases)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
-[![Tests](https://img.shields.io/badge/tests-54%2F54%20passing-brightgreen.svg)](tests/)
+[![Tests](https://img.shields.io/badge/tests-65%2F65%20passing-brightgreen.svg)](tests/)
 
 > DeepSeek Harness (DSH) 官方生态全功能增强插件：严格基于官方原生 UI/UX 设计契约，深度重构侧边栏工作区与会话树。提供**全量非递归防爆栈会话树**、**`placeFork` 智能分叉排序聚类**、**原生 L 型树导轨与字阶分层**、**折叠场景状态通道冒泡**、**已归档三态过滤**以及**会话级联物理永久删除（Purge）安全事务引擎**。
 

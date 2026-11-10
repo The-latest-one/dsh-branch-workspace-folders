@@ -2,10 +2,12 @@
 .sessionRow {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--dsh-sidebar-label-gap, 6px);
+  border-inline: var(--dsh-sidebar-paint-inset, 3px) solid transparent;
+  background-clip: padding-box;
   border-radius: 8px;
   padding: 0 8px;
-  padding-inline-start: calc(8px + var(--dsh-workspace-indent, 0px) + var(--dsh-branch-indent, 0px));
+  padding-inline-start: calc(var(--dsh-sidebar-row-padding, 12px) - var(--dsh-sidebar-paint-inset, 3px) + var(--dsh-workspace-indent, 0px) + var(--dsh-branch-indent, 0px));
   cursor: pointer;
   user-select: none;
   color: var(--dsw-alias-label-primary);
@@ -115,7 +117,7 @@
 }
 
 .sessionRow .title {
-  margin: 0 6px 0 4px;
+  margin: 0 6px 0 var(--dsh-sidebar-label-gap, 4px);
 }
 
 .flatSessionRowWithoutStatus .title {
@@ -228,11 +230,26 @@
   color: var(--dsw-alias-label-tertiary);
 }
 
-.time {
-  flex: none;
-  font-size: 12px;
-  line-height: 20px;
+.rowResting {
   color: var(--dsw-alias-label-tertiary);
+  flex: none;
+  align-items: center;
+  gap: 6px;
+  display: inline-flex;
+}
+
+.rowResting .pinIndicator,
+.rowResting .pinnedIndicator {
+  margin-left: 0;
+}
+
+.time,
+.timestamp {
+  color: var(--dsw-alias-label-tertiary);
+  flex: none;
+  margin-inline-end: -1px;
+  font-size: 10px;
+  line-height: 16px;
 }
 
 .scheduleIndicator {
@@ -256,18 +273,20 @@
 }
 
 /* Trailing action buttons surface on hover only (figma 27:4668 / 27:4656):
-   bare 16px glyphs, gap 12, tertiary grey. */
+   bare 16px glyphs, gap 13, tertiary grey. */
 .rowActions {
   flex: none;
   display: none;
   align-items: center;
-  gap: 12px;
+  gap: 13px;
 }
 
 .projectRow:hover .rowActions,
 .sessionRow:hover .rowActions,
 .projectRow.menuOpen .rowActions,
 .sessionRow.menuOpen .rowActions,
+html[data-input-modality=keyboard] .projectRow:focus-within .rowActions,
+html[data-input-modality=keyboard] .sessionRow:focus-within .rowActions,
 .searchResultRow:hover .rowActions {
   display: inline-flex;
 }
@@ -277,7 +296,14 @@
 }
 
 .sessionRow:hover .time,
-.sessionRow.menuOpen .time {
+.sessionRow:hover .timestamp,
+.sessionRow:hover .rowResting,
+.sessionRow.menuOpen .time,
+.sessionRow.menuOpen .timestamp,
+.sessionRow.menuOpen .rowResting,
+html[data-input-modality=keyboard] .sessionRow:focus-within .time,
+html[data-input-modality=keyboard] .sessionRow:focus-within .timestamp,
+html[data-input-modality=keyboard] .sessionRow:focus-within .rowResting {
   display: none;
 }
 
@@ -286,6 +312,10 @@
 .projectRow.menuOpen,
 .sessionRow.menuOpen {
   background-color: var(--dsw-alias-interactive-bg-hover);
+}
+
+.dragPreview {
+  background: var(--dsw-specific-sidebar-fill);
 }
 
 /* Session drag insert marker: a leading chevron and 2px rule between rows,
@@ -300,8 +330,8 @@
   content: '';
   position: absolute;
   z-index: 1;
-  left: 0;
-  right: 4px;
+  left: calc(-1 * var(--dsh-sidebar-paint-inset, 3px));
+  right: calc(4px - var(--dsh-sidebar-paint-inset, 3px));
   height: 12px;
   background:
     linear-gradient(
@@ -371,11 +401,13 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 16px;
-  height: 16px;
+  width: 24px;
+  height: 24px;
+  margin: -4px;
   border: none;
   border-radius: 4px;
   padding: 0;
+  outline-offset: -2px;
   background: transparent;
   cursor: pointer;
   color: var(--dsw-alias-label-tertiary);
@@ -423,7 +455,7 @@
     var(--dsw-alias-border-l4) 15px,
     var(--dsw-alias-border-l4) 16px
   );
-  background-position-x: calc(8px + var(--dsh-workspace-indent, 0px) + 4px);
+  background-position-x: calc(var(--dsh-sidebar-row-padding, 12px) - var(--dsh-sidebar-paint-inset, 3px) + var(--dsh-workspace-indent, 0px) + 4px);
   background-size: calc((var(--dsh-branch-depth, 1) - 1) * 16px) 100%;
   background-repeat: no-repeat;
 }
@@ -512,6 +544,31 @@
 
 .branchToggleSlot:hover {
   color: var(--dsw-alias-label-primary);
+}
+
+@media (hover: none) {
+  .projectRow .rowActions,
+  .searchResultRow .rowActions,
+  .sessionRow .rowActions {
+    display: inline-flex;
+  }
+  .sessionRow .timestamp,
+  .sessionRow .time,
+  .sessionRow:has(.pinnedAction) .pinIndicator,
+  .sessionRow:has(.pinnedAction) .pinnedIndicator,
+  .sessionRow .rowQuickActions > [data-slot] > :not(.pinnedAction),
+  .projectRow[aria-expanded=false] .rowActions {
+    display: none;
+  }
+  .sessionRow .pinnedAction {
+    order: -1;
+  }
+}
+
+@media (pointer: coarse) {
+  .renameInput {
+    font-size: 16px;
+  }
 }
 
 

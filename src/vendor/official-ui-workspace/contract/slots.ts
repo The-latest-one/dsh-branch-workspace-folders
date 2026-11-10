@@ -1,11 +1,31 @@
 /**
- * ui-workspace contracts for DeepSeek Harness 0.1.7-rc.1
+ * ui-workspace contracts for DeepSeek Harness 0.2.2-rc.1
  */
+import type { ContextMenuTarget } from '@deepseek-ai/dsh-client-ui-context-menu/client'
 import type { SessionSearchResultItem } from '@deepseek-ai/dsh-api-session-controller/client'
 import type { RemoteHostFacts } from '@deepseek-ai/dsh-api-remotes/client'
 import type { WorkspaceId, WorkspaceView } from '@deepseek-ai/dsh-api-workspace-controller/client'
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
 import type { createWorkspaceViewStore } from '../stores.ts'
+
+declare module '@deepseek-ai/dsh-client-ui-context-menu/client' {
+  interface ContextMenuTargetMap {
+    /** Registered Workspace header; path and title belong to the clicked row. */
+    workspace: {
+      readonly workspaceId: WorkspaceId
+      readonly path: string
+      readonly displayTitle: string
+    }
+  }
+}
+
+/** One request for the existing Workspace rename or delete dialog. */
+export type WorkspaceActionRequest = {
+  readonly action: 'rename' | 'delete'
+  readonly workspaceId: WorkspaceId
+  readonly displayTitle: string
+  readonly storedTitle: string
+}
 
 export interface HostObservable<T> {
   getSnapshot: () => T
@@ -47,6 +67,12 @@ declare module '@deepseek-ai/dsh-client-ui-slots' {
       scope: 'root'
       owner: { sessionId: SessionId }
     }
+    'sidebar.session.row.trailing': {
+      kind: 'list'
+      scope: 'root'
+      inline: true
+      owner: { readonly sessionId: SessionId }
+    }
     'sidebar.session.row.hover': {
       kind: 'list'
       scope: 'root'
@@ -62,10 +88,32 @@ export type DirectoryPickingInjected = {
 }
 
 export type WorkspaceBrowserInjected = {
+  openWorkspaceMenu: (
+    workspaceId: WorkspaceId,
+    path: string,
+    displayTitle: string,
+    point: { x: number; y: number },
+    mode?: 'toggle',
+  ) => void
+  settleWorkspaceAction: () => void
+  openSessionMenu: (
+    sessionId: SessionId,
+    displayTitle: string,
+    point: { x: number; y: number },
+    mode?: 'toggle',
+  ) => void
   hooks: DirectoryPickingInjected['hooks'] & {
+    workspaceActionRequest: HostObservable<WorkspaceActionRequest | null>
+    contextMenuTarget: HostObservable<ContextMenuTarget | null>
     hostInfo: HostObservable<RemoteHostFacts>
+    workspaceShortcuts?: HostObservable<any>
+    shortcuts?: HostObservable<readonly any[]>
   }
-  startSession: (workspaceId?: WorkspaceId) => void
+  requestSearch?: () => void
+  requestAddWorkspace?: () => void
+  closeAddWorkspace?: () => void
+  setDirectoryBusy?: (busy: boolean) => void
+  startSession: (workspaceId?: WorkspaceId, options?: any) => void
   open: (sessionId: SessionId) => void
   searchSessions: (
     query: string,
@@ -94,7 +142,7 @@ export interface WorkspaceBrowserProps {
   useWorkspaces: any
   useStore: any
   actions: any
-  startSession: (workspaceId?: WorkspaceId) => void
+  startSession: (workspaceId?: WorkspaceId, options?: any) => void
   open: (sessionId: SessionId) => void
   searchSessions: (
     query: string,
@@ -125,6 +173,26 @@ export interface WorkspaceBrowserProps {
   usePanelInfo?: <T = any>(
     selector: (info: { activePanelId: string | null }) => T,
   ) => T
+  useRemoteAccess?: any
+  useSessionAccess?: any
+  useWorkspaceAccess?: any
+  useWorkspaceActionRequest?: any
+  settleWorkspaceAction?: () => void
+  openSessionMenu?: (
+    sessionId: SessionId,
+    displayTitle: string,
+    point: { x: number; y: number },
+    mode?: 'toggle',
+  ) => void
+  openWorkspaceMenu?: (
+    workspaceId: WorkspaceId,
+    path: string,
+    displayTitle: string,
+    point: { x: number; y: number },
+    mode?: 'toggle',
+  ) => void
+  useContextMenuTarget?: any
+  useContextMenu?: any
 }
 
 export type WorkspacePickerInjected = DirectoryPickingInjected & {
