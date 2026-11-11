@@ -339,9 +339,17 @@ function runningChildCount(
   )
 }
 
-function resolveParentSessionId(s: any): SessionId | undefined {
-  const pid = s?.parentSessionId ?? s?.parentId ?? s?.parentSession
-  return pid ? (String(pid) as SessionId) : undefined
+function resolveParentSessionId(s: SessionSummary, list: SessionListState): SessionId | undefined {
+  const anyS = s as any
+  const pid = anyS?.parentSessionId ?? anyS?.parentId ?? anyS?.parentSession
+  if (pid) return String(pid) as SessionId
+  
+  // Robust fallback: check projection metadata if summary is missing parent info
+  const projection = list.projectionsBySession?.[s.id]
+  const metaPid = (projection?.values as any)?.meta?.parentSessionId
+  if (metaPid) return String(metaPid) as SessionId
+  
+  return undefined
 }
 
 function sessionNode(
@@ -364,7 +372,7 @@ function sessionNode(
     pinned: !archived.has(s.id) && pinned.has(s.id),
     archived: archived.has(s.id),
     updatedAt: s.updatedAt,
-    parentId: resolveParentSessionId(s),
+    parentId: resolveParentSessionId(s, list),
     ...(s.cwd === undefined || s.cwd === '' ? {} : { cwd: s.cwd }),
     ...(pendingInteraction === undefined ? {} : { pendingInteraction }),
   }
